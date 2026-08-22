@@ -1,0 +1,21 @@
+# ===========================================================================
+# THBR stage 2 — turn on the OpenThread border router.
+#
+# Applied ON TOP of sdkconfig.defaults:   THBR_STAGE=2 scripts/build.sh
+#
+# Stage 1 proves the PPP backbone alone.  Stage 2 binds the border router to
+# that netif, which is the project's go/no-go point: the BR implementation is
+# a prebuilt binary (libopenthread_br.a) and this is where an assumption it
+# makes about the backbone would surface.  See PLAN.md phase 3.
+# ===========================================================================
+
+CONFIG_THBR_ENABLE_BORDER_ROUTER=y
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_BORDER_ROUTER=y
+
+# The custom IPv6 hooks are only implemented when the border router is built
+# (lwip_hook_ip6_input comes from libopenthread_br.a,
+# lwip_hook_ip6_select_source_address from esp_openthread_lwip_netif.c, both
+# gated on CONFIG_OPENTHREAD_BORDER_ROUTER).
+CONFIG_LWIP_HOOK_IP6_INPUT_CUSTOM=y
+CONFIG_LWIP_HOOK_IP6_SELECT_SRC_ADDR_CUSTOM=y

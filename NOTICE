@@ -1,0 +1,49 @@
+THBR — Thread Border Router on an ESP32-C6 stick
+Copyright (c) 2026 Dirk Tostmann
+
+This project is licensed under the PolyForm Noncommercial License 1.0.0 (see
+LICENSE).  That license restricts use to noncommercial purposes.  It applies to
+the work of this project only.  The components listed below come from elsewhere,
+keep the licenses they were published under, and those licenses are not narrowed
+by this project's terms.
+
+Firmware (built into the image that runs on the stick)
+
+  OpenThread
+      Copyright (c) The OpenThread Authors
+      BSD 3-Clause License
+      https://github.com/openthread/openthread
+
+  ESP-IDF, and its components openthread (including the prebuilt
+  libopenthread_br.a), mdns and ethernet_init
+      Copyright (c) Espressif Systems (Shanghai) CO LTD
+      Apache License 2.0
+      https://github.com/espressif/esp-idf
+
+  esp_ot_br_server (border router REST API and web GUI), from esp-thread-br
+      Copyright (c) 2022 Espressif Systems (Shanghai) CO LTD
+      Apache License 2.0
+      https://github.com/espressif/esp-thread-br
+
+  cJSON
+      Copyright (c) 2009-2017 Dave Gamble and cJSON contributors
+      MIT License
+      https://github.com/DaveGamble/cJSON
+
+Host side (the add-on / container image)
+
+  esptool
+      Copyright (c) Espressif Systems (Shanghai) CO LTD and contributors
+      GNU General Public License v2.0 or later
+      https://github.com/espressif/esptool
+      Shipped unmodified and invoked as a separate program to write the stick's
+      flash.  It remains under the GPL: this project's noncommercial terms do
+      not apply to it, and nothing here adds restrictions to it.  Its complete
+      source is the Python code as installed in the image.
+
+  Alpine Linux base image, Python, iproute2 and the packages they pull in
+      Each under its own license, as published by its distributor.
+
+  busware logo
+      Copyright (c) Dirk Tostmann.  Trademark and branding, not covered by the
+      software license.

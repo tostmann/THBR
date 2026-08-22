@@ -1,0 +1,57 @@
+# THBR next to Home Assistant in Docker.  Copy what you need into your own
+# compose file; the homeassistant and matter-server services below only show
+# the two lines that matter for THBR.
+services:
+  thbr:
+    image: tostmann/thbr:2026.8.10   # multi-arch (arm64, amd64); or build
+                                   # your own: docker build -t thbr addon/
+    container_name: thbr
+    restart: unless-stopped
+    network_mode: host     # the tap must live in the host's network namespace
+    cap_add:
+      - NET_ADMIN          # create the tap, set its address and sysctls
+      - NET_RAW            # router solicitation, and the reachability check
+    volumes:
+      # The live /dev, not a single --device: the stick re-enumerates after a
+      # flash or reset and may come back under another ttyACM number, which a
+      # device mapping made at container start would not follow.
+      - /dev:/dev
+      # The pump sets two IPv6 sysctls on the tap (accept_ra=2,
+      # accept_ra_rt_info_max_plen=64); without them the host never learns
+      # the route into the Thread mesh.  /proc/sys is read-only inside a
+      # container, so the host's conf tree is mapped in here.
+      - /proc/sys/net/ipv6/conf:/hostsys
+      # Keeps the saved network settings across container recreations. As a
+      # Home Assistant add-on this is the Supervisor's own /data, which its
+      # backups already include; under plain Docker it has to be a volume.
+      - thbr-data:/data
+    device_cgroup_rules:
+      - "c 166:* rmw"      # ttyACM* — the stick's USB-Serial/JTAG port
+      - "c 10:200 rmw"     # /dev/net/tun
+    environment:
+      # Always the stable by-id path.  Find it with: ls /dev/serial/by-id/
+      THBR_DEVICE: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00
+      # auto:    flash a stick that answers nothing (new stick, RCP image)
+      # upgrade: also replace an older THBR or a foreign OTBR firmware
+      # never:   never touch the flash
+      THBR_FLASH: auto
+      # Who may reach the web interface on port 8099 — it can flash the stick
+      # and hand out the Thread credentials.  Open by default under plain
+      # Docker, because there is no ingress here to authenticate against.
+      THBR_WEB_ALLOW: any
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    network_mode: host
+    # HA binds its mDNS sockets per interface when it starts; the tap has to
+    # exist by then or Thread discovery never sees the router.
+    depends_on:
+      thbr:
+        condition: service_healthy
+    # ... your existing configuration ...
+
+  # matter-server needs no change unless it pins an interface with
+  # --primary-interface; then that must be the tap (tap0), not the LAN.
+
+volumes:
+  thbr-data:

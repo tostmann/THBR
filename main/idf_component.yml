@@ -1,0 +1,18 @@
+## Component Manager dependencies for the THBR main component.
+##
+## OpenThread is a built-in IDF component — no registry entry needed.
+dependencies:
+  espressif/mdns: "^1.5.0"
+  ## REST API + web GUI, ot-br-posix-compatible (/node, /node/dataset/active,
+  ## /node/state, /diagnostics ...) — this is what lets Home Assistant's OTBR
+  ## integration import the dataset and commission Matter-over-Thread devices,
+  ## rather than merely discovering the router over mDNS.  Lives in the
+  ## esp-thread-br SDK, not the registry, hence the git path dependency.
+  espressif/esp_ot_br_server:
+    git: https://github.com/espressif/esp-thread-br.git
+    path: components/esp_ot_br_server
+  ## Pulled in because esp_ot_br_server PRIV_REQUIREs it.  Kept inert: all
+  ## EXAMPLE_CONNECT_* options are off, we bring up the backbone ourselves.
+  protocol_examples_common:
+    path: ${IDF_PATH}/examples/common_components/protocol_examples_common
+  idf: ">=5.3.0"

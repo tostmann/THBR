@@ -1,0 +1,96 @@
+menu "THBR — Thread Border Router over serial IP backbone"
+
+    choice THBR_TRANSPORT
+        prompt "Backbone transport over the USB-Serial/JTAG port"
+        default THBR_TRANSPORT_TAP
+        help
+            How the IPv6 backbone reaches the host through the C6's only USB
+            port (which is hardwired to CDC-ACM — no Ethernet gadget possible).
+
+        config THBR_TRANSPORT_TAP
+            bool "Ethernet frames, SLIP-framed, to a host TAP device"
+            help
+                A real L2 netif: MAC, broadcast domain, MLD6/IGMP.  This is
+                what the border-router library needs — over PPP it never
+                initialises its infra-interface side (measured, see PLAN.md) —
+                and it is what HAOS can run (CONFIG_TUN=y everywhere, no
+                kernel PPP on x86_64).  Host side: tools/tap_pump.py.
+
+        config THBR_TRANSPORT_PPP
+            bool "PPP (pppd on the host)"
+            help
+                Carries IP correctly and needs no custom host code, but the
+                border router will not route on it.  Kept as the control case
+                and for plain data transports.
+    endchoice
+
+    config THBR_TAP_MTU
+        int "Backbone MTU (TAP transport)"
+        depends on THBR_TRANSPORT_TAP
+        default 1500
+        range 576 1500
+
+    config THBR_TAP_STICK_IPV4
+        string "Stick IPv4 address (TAP transport)"
+        depends on THBR_TRANSPORT_TAP
+        default "192.168.45.2"
+
+    config THBR_TAP_HOST_IPV4
+        string "Host IPv4 address (TAP transport)"
+        depends on THBR_TRANSPORT_TAP
+        default "192.168.45.1"
+        help
+            Also the destination for the UDP log stream.
+
+    config THBR_TAP_NETMASK
+        string "Backbone netmask (TAP transport)"
+        depends on THBR_TRANSPORT_TAP
+        default "255.255.255.0"
+
+
+    config THBR_CONSOLE_GRACE_MS
+        int "Plain-console grace window before PPP takes the USB port (ms)"
+        default 3000
+        range 0 30000
+        help
+            The C6 has a single USB-Serial/JTAG port and PPP claims it.  For
+            this long after boot the console stays readable as plain text, so
+            a boot failure is diagnosable without a UART adapter.  Set 0 to
+            hand over immediately (production), raise it while bringing up.
+
+    config THBR_INFO_PORT
+        int "TCP port of the firmware info API (/version, /status)"
+        default 8082
+        range 1 65535
+        help
+            Identifies the firmware to the host-side container, which
+            decides from it whether the stick needs flashing.  Separate
+            from the ot-br REST API on port 80 so it answers even when
+            the border router does not come up.
+
+    config THBR_LOG_UDP_PORT
+        int "UDP port for logs after the handover"
+        default 5514
+        range 1 65535
+        help
+            Once PPP is up, ESP_LOG output is streamed to this UDP port on the
+            PPP peer, backlog first.  On the host:  nc -u -l -p 5514
+
+    config THBR_BACKBONE_WAIT_MS
+        int "How long to wait for the backbone before starting the BR (ms)"
+        default 60000
+        range 1000 600000
+
+    config THBR_ENABLE_BORDER_ROUTER
+        bool "Start the OpenThread border router (stage 2)"
+        default n
+        select OPENTHREAD_ENABLED
+        select OPENTHREAD_BORDER_ROUTER
+        help
+            Stage 1 builds the PPP backbone alone, which is what proves the
+            serial IP link before anything depends on it.  Enable this for
+            stage 2, where the border router binds to that netif — the
+            project's go/no-go point, since the BR implementation is a
+            prebuilt binary (see PLAN.md phase 3).
+
+endmenu

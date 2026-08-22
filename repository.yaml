@@ -1,0 +1,5 @@
+# Makes this repository installable as a Home Assistant add-on repository.
+# Settings -> Add-ons -> Add-on store -> ... -> Repositories -> add this URL.
+name: THBR
+url: https://github.com/tostmann/THBR
+maintainer: Dirk Tostmann

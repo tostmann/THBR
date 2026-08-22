@@ -1,0 +1,18 @@
+# Partition table for ESP32-C6 4 MB flash — THBR (serial IP backbone).
+#
+# Single-app (no OTA) layout for bring-up.  OpenThread persists its network
+# dataset / network info in the `nvs` partition (esp_ot_config.h PORT_CONFIG
+# sets storage_partition_name = "nvs"), so nvs must not be undersized.
+#
+# The OT-BR image (OpenThread stack + lwIP IPv6 forwarding + mbedTLS DTLS/
+# ECJPAKE + mDNS) is sizeable; 2.875 MB factory leaves generous headroom on
+# 4 MB and room to add OTA later.  Switch to dual-OTA once the code stabilises.
+#
+# Name,      Type, SubType,  Offset,    Size,      Flags
+nvs,         data, nvs,      0x9000,    0x6000,
+phy_init,    data, phy,      0xf000,    0x1000,
+factory,     app,  factory,  0x10000,   0x300000,
+coredump,    data, coredump, 0x310000,  0x10000,
+# web_storage holds the esp_ot_br_server frontend (HTML/JS), flashed as a
+# SPIFFS image by the component's spiffs_create_partition_image(web_storage).
+web_storage, data, spiffs,   0x320000,  0x40000,

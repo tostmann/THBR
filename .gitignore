@@ -1,0 +1,33 @@
+# Generated configuration and build output
+/sdkconfig
+/sdkconfig.old
+/dependencies.lock
+/managed_components/
+/build/
+/.thbr_stage
+__pycache__/
+*.pyc
+._*
+.DS_Store
+
+# Host-specific build environment (paths differ per machine)
+/scripts/idf_env.sh
+
+# Working files: notes, measurements, captures, one-off scripts
+/dist/
+/test/
+*.log
+*.hex
+*.pcap
+
+# Never in a repository
+CLAUDE.md
+MEMORY.md
+GEMINI.md
+FACTS.md
+HARDWARE_STATUS.md
+.env
+.env.*
+*.key
+*.pem
+.claude/

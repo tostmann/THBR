@@ -1,0 +1,119 @@
+# ===========================================================================
+# THBR defaults — ESP32-C6 on-chip Thread Border Router, PPP-over-USJ backbone.
+#
+# Derived from the sibling project TBR (same chip, W5500 Ethernet backbone);
+# the differences are all in the backbone: PPP + lwIP-PPP instead of esp_eth,
+# and the console gets out of the way because PPP owns the only USB port.
+#
+# idf.py re-reads this file only when sdkconfig is absent — scripts/build.sh
+# drops sdkconfig automatically when this file is newer.
+# ===========================================================================
+
+# ----- Target ---------------------------------------------------------------
+# Pinned so a fresh build dir needs no `idf.py set-target` (which would
+# otherwise default to esp32/xtensa and fail on the missing toolchain).
+CONFIG_IDF_TARGET="esp32c6"
+
+# ----- Partition table ------------------------------------------------------
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# ----- Flash — the bench C6 (and the busware sticks) are 4 MB ---------------
+# Verified on the bench stick: ESP32-C6FH4 (QFN32) rev v0.2, embedded 4 MB.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# ----- Stage gate -----------------------------------------------------------
+# Stage 1 = PPP backbone only. Flip to y (or via menuconfig) for stage 2.
+CONFIG_THBR_ENABLE_BORDER_ROUTER=n
+
+# ----- OpenThread: native 15.4 radio, border router role --------------------
+# Only takes effect in stage 2; harmless (and cheap) to leave configured.
+CONFIG_OPENTHREAD_RADIO_NATIVE=y
+CONFIG_OPENTHREAD_TASK_SIZE=8192
+CONFIG_OPENTHREAD_DNS64_CLIENT=y
+CONFIG_OPENTHREAD_COMMISSIONER=y
+CONFIG_OPENTHREAD_JOINER=y
+# The OT CLI would want the console, which PPP has taken. Stage 2 reaches the
+# CLI over TCP instead (see PLAN.md); leave the serial CLI off.
+CONFIG_OPENTHREAD_CLI=n
+
+# ----- No WiFi, hence no coexistence ----------------------------------------
+# The single-RF-path contention that makes Espressif advise against
+# single-C6 border routers does not exist here: nothing but 802.15.4 uses the
+# radio, because the backbone is a wire.
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=n
+
+# ----- lwIP: PPP + IPv6 forwarding and border-routing hooks -----------------
+CONFIG_LWIP_PPP_SUPPORT=y
+CONFIG_LWIP_PPP_ENABLE_IPV6=y
+CONFIG_LWIP_PPP_NOTIFY_PHASE_SUPPORT=y
+CONFIG_LWIP_PPP_DEBUG_ON=n
+CONFIG_LWIP_IPV6=y
+CONFIG_LWIP_IPV6_FORWARD=y
+CONFIG_LWIP_IPV6_NUM_ADDRESSES=12
+CONFIG_LWIP_MULTICAST_PING=y
+CONFIG_LWIP_NETIF_STATUS_CALLBACK=y
+CONFIG_LWIP_HOOK_IP6_ROUTE_DEFAULT=y
+CONFIG_LWIP_HOOK_ND6_GET_GW_DEFAULT=y
+CONFIG_LWIP_IPV6_AUTOCONFIG=y
+# NOTE the two *_CUSTOM IPv6 hooks live in sdkconfig.defaults.br, not here:
+# their implementations (lwip_hook_ip6_input in libopenthread_br.a,
+# lwip_hook_ip6_select_source_address in esp_openthread_lwip_netif.c) exist
+# only under CONFIG_OPENTHREAD_BORDER_ROUTER.  Enabling them in a stage-1
+# build fails at link time with undefined references.
+
+# ----- mbedTLS: DTLS + ECJPAKE for Thread commissioning ---------------------
+CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
+CONFIG_MBEDTLS_KEY_EXCHANGE_ECJPAKE=y
+CONFIG_MBEDTLS_ECJPAKE_C=y
+
+# ----- mDNS -----------------------------------------------------------------
+CONFIG_MDNS_MULTIPLE_INSTANCE=y
+# mdns keeps MDNS_MAX_INTERFACES (3) slots and marks them predefined for
+# STA/AP/ETH; mdns_register_netif() only takes a NON-predefined slot and
+# returns ESP_ERR_NO_MEM when none is left.  This board has neither WiFi nor
+# Ethernet, so free all three for the PPP backbone. (Measured 2026-08-20:
+# with the defaults, registering the backbone failed with ESP_ERR_NO_MEM at
+# 326 KB free heap — the name says memory, the cause is slot allocation.)
+CONFIG_MDNS_PREDEF_NETIF_STA=n
+CONFIG_MDNS_PREDEF_NETIF_AP=n
+CONFIG_MDNS_PREDEF_NETIF_ETH=n
+
+# ----- Console: plain text during the grace window, then PPP takes over -----
+# Kept on USB-Serial/JTAG deliberately — log_sink detaches it at runtime
+# rather than the build disabling it, so a boot failure before the handover
+# is still visible.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_UART_NONE=y
+
+# ----- esp_ot_br_server keeps protocol_examples_common inert ---------------
+# We bring up the backbone ourselves; example_connect must not try to open a
+# second interface (it would pull in WiFi/Ethernet setup we do not want).
+CONFIG_EXAMPLE_CONNECT_WIFI=n
+CONFIG_EXAMPLE_CONNECT_ETHERNET=n
+CONFIG_EXAMPLE_CONNECT_THREAD=n
+
+# ----- Coredump to flash ----------------------------------------------------
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_STACK_SIZE=1024
+
+# ----- Task stacks / watchdog / logging -------------------------------------
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=3584
+CONFIG_ESP_TASK_WDT_INIT=n
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
+
+# --- Task watchdog -----------------------------------------------------------
+# Compiled in but never started by default, so a hung task went unnoticed while
+# the chip still answered on the backbone.  Started here, watching only the
+# tasks that subscribe (the heartbeat does) — the idle tasks are left out on
+# purpose so a busy 802.15.4 stack cannot cause a reboot.
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+# Without this the watchdog only prints a warning and the hung task stays hung —
+# which is no better than not having one.  Panic, so the chip restarts.
+CONFIG_ESP_TASK_WDT_PANIC=y

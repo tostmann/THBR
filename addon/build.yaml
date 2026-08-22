@@ -1,0 +1,14 @@
+# Base images the Supervisor builds this add-on from, per architecture.
+# Only consulted when config.yaml carries no `image:` — with one, the
+# Supervisor pulls the published image and never builds.  These are also the
+# bases scripts/publish_images.sh builds the published images from.
+# Alpine without Python; the Dockerfile adds it.
+#
+# The Supervisor logs this file as deprecated (it wants the base image named
+# directly in the Dockerfile) but still reads it, and it is still how the
+# official border-router add-on pins its bases.  Without it no BUILD_FROM is
+# passed at all since Supervisor 2026.04.0, and the Dockerfile would fall back
+# to its plain-Docker default.
+build_from:
+  aarch64: ghcr.io/home-assistant/aarch64-base:latest
+  amd64: ghcr.io/home-assistant/amd64-base:latest
