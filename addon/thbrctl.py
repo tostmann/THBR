@@ -829,7 +829,12 @@ def backup_nvs():
     os.makedirs(BACKUP_DIR, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     path = os.path.join(BACKUP_DIR, f"nvs-{stamp}.bin")
-    cmd = [sys.executable, "-m", "esptool", "--chip", "esp32c6",
+    # No --chip: this reads a raw flash region, which needs the chip detected,
+    # not asserted.  Naming one turns a settings file into something that can
+    # only be read back by the same kind of chip it came from — and esptool
+    # refuses outright when the two differ, which is what a replacement stick
+    # of another family runs into.
+    cmd = [sys.executable, "-m", "esptool",
            "--port", ENV["device"], "--before", "default-reset",
            "--after", "hard-reset", "read-flash", "0x9000", "0x6000", path]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
@@ -855,13 +860,18 @@ def restore_nvs(name):
     if not os.path.exists(path) or os.path.getsize(path) != 0x6000:
         log(f"cannot restore {name}: not a 24 KB settings file")
         return "no such backup"
-    cmd = [sys.executable, "-m", "esptool", "--chip", "esp32c6",
+    # No --chip, for the reason given in backup_nvs: the settings are the same
+    # bytes whatever carries them, and asserting a chip here is what stops a
+    # network from moving to a replacement stick of a different family.
+    cmd = [sys.executable, "-m", "esptool",
            "--port", ENV["device"], "--before", "default-reset",
            "--after", "hard-reset", "write-flash", "0x9000", path]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
     ok = proc.returncode == 0 and "Hash of data verified" in proc.stdout
     log(f"restored the network settings from {os.path.basename(path)}: "
         f"{'OK' if ok else 'FAILED'}")
+    if not ok:
+        log("    " + ((proc.stderr or proc.stdout).strip().splitlines() or ["no output"])[-1][:160])
     return "OK" if ok else "FAILED"
 
 

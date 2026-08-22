@@ -1,6 +1,8 @@
 # Generated configuration and build output
 /sdkconfig
 /sdkconfig.old
+/sdkconfig.*.old
+/sdkconfig.c5
 /dependencies.lock
 /managed_components/
 /build/

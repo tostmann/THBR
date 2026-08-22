@@ -107,7 +107,7 @@ For Home Assistant in a container of your own. The image is on Docker Hub as
 `arm64` and `amd64`:
 
 ```
-docker pull tostmann/thbr:2026.8.10
+docker pull tostmann/thbr:2026.8.11
 ```
 
 Take the `thbr` service from [`addon/compose.yaml`](addon/compose.yaml), point

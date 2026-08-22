@@ -4,6 +4,18 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.11
+
+Firmware unchanged at 0.1.35.
+
+- Saving and restoring the network settings named a chip, which meant a
+  settings file could only be written back to a stick of the same family — and
+  esptool refuses outright when they differ. Since the point of the feature is
+  moving a network to replacement hardware, that restriction defeated it. The
+  chip is now detected rather than asserted, as it should be for reading and
+  writing a raw flash region.
+- A failed restore now says why, instead of only that it failed.
+
 ## 2026.8.10
 
 Firmware unchanged at 0.1.35.
