@@ -4,6 +4,19 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.12
+
+Documentation only. Firmware unchanged at 0.1.35.
+
+- Saved network settings carry the router's whole identity, not only the
+  network's credentials: a stick restored from another comes up under the
+  original's extended address. That is what lets devices rejoin without
+  noticing, and it means two sticks holding the same saved settings must never
+  be on the air together. Measured, and now said.
+- What is known about the ESP32-C5: the firmware builds and runs on it, but on
+  the one tested, writing flash over the chip's own USB port was unreliable
+  while the board's UART bridge was not.
+
 ## 2026.8.11
 
 Firmware unchanged at 0.1.35.

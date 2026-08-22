@@ -16,6 +16,15 @@ USB port, so a new stick needs nothing but being plugged in.
   (USB-Serial/JTAG). It appears in the add-on's device list as an
   *Espressif USB JTAG/serial debug unit*.
 
+An ESP32-C5 runs this firmware too — it builds for that target unchanged, and
+on hardware it came up as a border router and joined a mesh alongside a C6. No
+C5 build ships here, and one caveat is worth knowing before anyone tries: on
+the C5 tested, writing flash over the chip's own USB port was unreliable and
+the chip did not always restart afterwards, while the same operations over the
+board's UART bridge worked every time. The C6 shows none of that. Roughly half
+the free memory remains on the C5 (about 130 KB against 265 KB), which was
+enough in the test but has not been watched over days.
+
 Installing and updating are ordinary add-on operations: the image is published
 per architecture and the Supervisor pulls it, so an update is a download rather
 than a build. A new add-on version usually also carries new stick firmware —
@@ -191,6 +200,13 @@ same key, same PAN ID, same channel, so the devices in the mesh rejoin on their
 own and none of them has to be commissioned again — verified on real hardware
 by swapping the stick and bringing a Matter lamp back without touching it.
 Keep the file safe: it carries the credentials of your Thread network.
+
+**One saved file, one running stick.** What is saved is not only the network's
+credentials but the router's whole identity, down to the address the mesh knows
+it by — which is exactly why the devices rejoin without noticing. Measured: a
+stick restored from another one comes up under the original's extended address,
+not its own. So a restored stick replaces the old one; it does not join it. Two
+sticks carrying the same saved settings must never be on the air at once.
 
 A whole-flash backup is not offered, and would not work: reading 4 MB over the
 stick's USB-Serial/JTAG port aborts, while this 24 KB partition reads in a
