@@ -4,6 +4,19 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.13
+
+Firmware unchanged at 0.1.35.
+
+- Replacing the stick left the host routing into the mesh through the stick
+  that had been removed. The route was only ever renewed when the network's
+  prefix changed; after a replacement the prefix is deliberately the same and
+  only the next hop moves, so the old route survived as a black hole that
+  looked perfectly healthy. The next hop is now compared too, and a route
+  pointing at a border router that is no longer there is repointed.
+  Found while moving a network to replacement hardware, which is exactly the
+  case the saved settings exist for.
+
 ## 2026.8.12
 
 Documentation only. Firmware unchanged at 0.1.35.

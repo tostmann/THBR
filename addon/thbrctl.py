@@ -476,6 +476,25 @@ def eui64_address(prefix, mac):
     return ipaddress.IPv6Address(int(net.network_address) | int.from_bytes(iid, "big"))
 
 
+def _as_address(text):
+    """An address object, or None — the firmware writes fe80:0000:..., `ip`
+    writes fe80::..., and only the parsed form compares reliably."""
+    try:
+        return ipaddress.ip_address(str(text).strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _via_address(route_line):
+    parts = route_line.split()
+    if "via" in parts:
+        try:
+            return _as_address(parts[parts.index("via") + 1])
+        except IndexError:
+            return None
+    return None
+
+
 def ensure_backbone_routing():
     """Make sure the host can actually reach the Thread mesh.
 
@@ -563,6 +582,21 @@ def ensure_backbone_routing():
                 f"the router advertisement")
         return
     if route.strip():
+        # The prefix is unchanged — but the border router behind it may not be.
+        # Replace a stick and the network keeps its prefix while the next hop
+        # becomes the new stick's link-local; a route still pointing at the old
+        # one is a black hole that looks perfectly healthy in `ip -6 route`.
+        # Measured: after a swap the mesh answered nothing until this was
+        # repointed by hand.
+        if "proto static" in route:
+            have, want = _via_address(route), _as_address(ll)
+            if want and have != want:
+                rc, _ = run_ip(["-6", "route", "replace", omr, "via", ll,
+                                "dev", tap, "proto", "static",
+                                "metric", "1024"], check=True)
+                if rc == 0:
+                    log(f"{omr} pointed at {have}, which no longer answers — "
+                        f"repointed to {ll}, the border router now on this port")
         return
     rc, _ = run_ip(["-6", "route", "replace", omr, "via", ll, "dev", tap,
                     "proto", "static", "metric", "1024"], check=True)
