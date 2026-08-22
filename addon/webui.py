@@ -112,7 +112,7 @@ footer a{color:var(--mut)} footer a:hover{color:var(--acc)}
     <source srcset="logo-dark.png" media="(prefers-color-scheme: dark)">
     <img src="logo.png" alt="busware" class="logo" onerror="this.style.display='none'">
   </picture>
-  <h1>ESP32-C6 Thread Border Router</h1>
+  <h1>Thread Border Router</h1>
   <span class="ver" id="ver"></span>
   <span class="sp"></span>
   <span id="hdrstat" class="mut"></span>

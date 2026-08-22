@@ -4,6 +4,17 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.14
+
+Firmware unchanged at 0.1.35.
+
+- The page called itself after one chip. It runs border routers on more than
+  one, and the chip it is talking to has always been on the page anyway, so the
+  heading no longer names a model.
+- What the ESP32-C5 does and does not do, from having run one: a network moved
+  onto it keeps working, memory is about half, and talking to the chip over its
+  own USB port sometimes stops until it is reset.
+
 ## 2026.8.13
 
 Firmware unchanged at 0.1.35.

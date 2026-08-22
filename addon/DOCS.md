@@ -16,14 +16,18 @@ USB port, so a new stick needs nothing but being plugged in.
   (USB-Serial/JTAG). It appears in the add-on's device list as an
   *Espressif USB JTAG/serial debug unit*.
 
-An ESP32-C5 runs this firmware too — it builds for that target unchanged, and
-on hardware it came up as a border router and joined a mesh alongside a C6. No
-C5 build ships here, and one caveat is worth knowing before anyone tries: on
-the C5 tested, writing flash over the chip's own USB port was unreliable and
-the chip did not always restart afterwards, while the same operations over the
-board's UART bridge worked every time. The C6 shows none of that. Roughly half
-the free memory remains on the C5 (about 130 KB against 265 KB), which was
-enough in the test but has not been watched over days.
+An ESP32-C5 runs this firmware too. It builds for that target unchanged, and
+on hardware it carries a border router in daily use: a network saved from a C6
+was restored onto one, the mesh reformed with every node, and the devices on it
+went on working without being commissioned again. About 130 KB of memory stays
+free there against 265 KB on a C6 — half, but steady.
+
+No C5 build ships here, and one thing is worth knowing before anyone tries. On
+the C5 tested, talking to the chip over its own USB port sometimes stopped
+working: opening the port occasionally left it silent, and only a real reset
+brought it back. It did not happen every time, and it never happened on a C6.
+A board with a UART bridge makes that harmless — a reset over the bridge always
+revived it, and that takes no more than pulsing DTR and RTS.
 
 Installing and updating are ordinary add-on operations: the image is published
 per architecture and the Supervisor pulls it, so an update is a download rather

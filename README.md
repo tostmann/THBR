@@ -33,8 +33,10 @@ Home Assistant. Both are built from the same directory.
 ## Requirements
 
 - An ESP32-C6 with 4 MB flash, connected by its **native USB port**
-  (USB-Serial/JTAG). Other Espressif chips with a border-router library exist,
-  but the ESP32-H2 is not among them — Espressif ships none for it.
+  (USB-Serial/JTAG). An ESP32-C5 also runs it, with about half the memory to
+  spare and a caveat described in [`addon/DOCS.md`](addon/DOCS.md); no C5 build
+  ships here. The ESP32-H2 cannot: Espressif ships no border-router library for
+  it.
 - Home Assistant OS or Supervised, or Home Assistant in Docker on a host you
   control.
 
@@ -107,7 +109,7 @@ For Home Assistant in a container of your own. The image is on Docker Hub as
 `arm64` and `amd64`:
 
 ```
-docker pull tostmann/thbr:2026.8.13
+docker pull tostmann/thbr:2026.8.14
 ```
 
 Take the `thbr` service from [`addon/compose.yaml`](addon/compose.yaml), point
