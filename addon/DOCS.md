@@ -22,12 +22,15 @@ was restored onto one, the mesh reformed with every node, and the devices on it
 went on working without being commissioned again. About 130 KB of memory stays
 free there against 265 KB on a C6 — half, but steady.
 
-No C5 build ships here, and one thing is worth knowing before anyone tries. On
-the C5 tested, talking to the chip over its own USB port sometimes stopped
-working: opening the port occasionally left it silent, and only a real reset
-brought it back. It did not happen every time, and it never happened on a C6.
-A board with a UART bridge makes that harmless — a reset over the bridge always
-revived it, and that takes no more than pulsing DTR and RTS.
+A C5 build ships alongside the C6 one, and the add-on writes whichever matches
+the chip it finds. One thing is worth knowing before choosing a C5. On the C5s
+tested, talking to the chip over its own USB port sometimes stopped working:
+the port stayed listed and enumerated, but nothing answered through it, and a
+USB bus reset did not help. It did not happen every time, and it has never
+happened on a C6. A board with a UART bridge makes it harmless — a reset over
+the bridge always revived it, and that takes no more than pulsing DTR and RTS.
+The Bluetooth proxy was measured on a C6; on a C5 it has to fit in what is left
+of a smaller budget, and that has not been tested here.
 
 Installing and updating are ordinary add-on operations: the image is published
 per architecture and the Supervisor pulls it, so an update is a download rather
@@ -128,6 +131,35 @@ re-commissioned.
    found, make sure the commissioning dialog is not restricted to network-only
    discovery — a factory-new Thread device is in no network yet and has to be
    found over Bluetooth.
+
+## Commissioning over Bluetooth
+
+A factory-new Matter device is in no network yet, so the first conversation
+with it happens over Bluetooth LE. Plenty of machines running Home Assistant
+have no Bluetooth: servers, most NUCs, virtual machines. The stick has, and it
+offers that radio to the Matter server.
+
+Nothing needs configuring here. Switch **`ble_proxy` on in the Matter Server
+add-on's own options**; the stick dials its proxy endpoint, announces itself,
+and from then on the Matter server drives scanning and connecting through the
+stick's radio. Its log names what it uses: lines reading `via proxy` and
+`ProxyBleChannel` mean the stick carried the exchange.
+
+Two details that matter if something looks wrong:
+
+- The Matter server publishes its port on the loopback interface only, and the
+  stick is a hop away on the backbone, so it cannot reach that address. The
+  add-on listens on the host end of the backbone and forwards. Set
+  `THBR_MATTER_ADDR` if the server is somewhere else than `127.0.0.1:5580`, or
+  leave it empty to switch the forwarder off entirely.
+- If no Matter server is reachable, the stick keeps trying and says so once a
+  minute, naming the address it dials. That line is not an error in itself —
+  it is what a stick on a machine without a Matter server does.
+
+Bluetooth and Thread share one radio on these chips. During a commissioning
+run the mesh can go briefly sluggish; the firmware logs `ChannelAccessFailure`
+when the Thread stack had to wait for the air. It passes when the exchange is
+done.
 
 ## The add-on's own page
 

@@ -1,0 +1,16 @@
+## BLE overlay: the proxy that lends the stick's radio to a Matter server.
+##
+## NimBLE as a central only — the stick scans and connects, it never
+## advertises, so the peripheral and broadcaster roles are dead weight.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=y
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=n
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=2
+
+## Without this the ATT_MTU stays at 23 and the transport cuts every
+## certificate into 20-byte pieces — hundreds of round trips on a radio that
+## also has Thread to serve, and the exchange stalls.
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=247

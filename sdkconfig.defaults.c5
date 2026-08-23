@@ -1,0 +1,6 @@
+## C5 overlay: same firmware, other radio chip.
+##
+## Everything else — border router, backbone, web API — is identical; only the
+## target differs, and the target cannot be overridden on the command line
+## without also discarding the rest of the defaults.  Layer this file last.
+CONFIG_IDF_TARGET="esp32c5"

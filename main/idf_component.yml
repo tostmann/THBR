@@ -3,6 +3,9 @@
 ## OpenThread is a built-in IDF component — no registry entry needed.
 dependencies:
   espressif/mdns: "^1.5.0"
+  ## WebSocket-Client fuer den BLE-Proxy zum Matter-Server.
+  espressif/esp_websocket_client: "^1.8.0"
+  espressif/cjson: "*"
   ## REST API + web GUI, ot-br-posix-compatible (/node, /node/dataset/active,
   ## /node/state, /diagnostics ...) — this is what lets Home Assistant's OTBR
   ## integration import the dataset and commission Matter-over-Thread devices,

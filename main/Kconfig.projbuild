@@ -93,4 +93,13 @@ menu "THBR — Thread Border Router over serial IP backbone"
             project's go/no-go point, since the BR implementation is a
             prebuilt binary (see PLAN.md phase 3).
 
+
+    config THBR_BLE_PROXY_URI
+        string "Matter server BLE proxy endpoint"
+        default "ws://192.168.45.1:5580/ble"
+        help
+            Where the BLE proxy dials in.  The Matter server offers this on
+            the same port as its control interface, under /ble.  The default
+            points at the host on the other end of the backbone.
+
 endmenu

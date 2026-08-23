@@ -4,6 +4,35 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.23
+
+Firmware 0.1.38.
+
+- **The stick lends its Bluetooth radio to the Matter server.** A Matter device
+  is talked to over Bluetooth LE before it has ever seen the Thread network,
+  and plenty of machines running Home Assistant have no Bluetooth: servers,
+  most NUCs, virtual machines. The stick has one. Switch `ble_proxy` on in the
+  Matter Server add-on's own options and the stick dials its proxy endpoint,
+  announces itself, and carries the scan, the connection and the commissioning
+  exchange. Nothing to configure here.
+- The Matter server publishes its port on the loopback interface only, which
+  the stick — a hop away on the backbone — cannot reach. The add-on listens on
+  the host end of the backbone and forwards. `THBR_MATTER_ADDR` points it
+  somewhere else, or switches it off when empty.
+- **Firmware for the C6 and the C5 both ship**, one bundle per chip, and the
+  chip found on the port decides which one is written. Refusing a chip the
+  image has no firmware for now says which chips it does carry.
+- The commissioning exchange asks for a bigger ATT_MTU before reporting the
+  link. Reporting the 23 bytes a fresh Bluetooth link starts with made the
+  transport cut every certificate into 20-byte pieces — hundreds of round trips
+  on a radio that also has Thread to serve, and the exchange stalled. Measured
+  on hardware: a commissioning that used to stall now completes in 22 seconds.
+- A stick that finds no Matter server used to put six lines in the log every
+  five seconds and push everything else out of it within a minute. It now says
+  it once a minute and names the address it is dialling. A link that drops
+  after being established says it was lost, rather than that no server was
+  there.
+
 ## 2026.8.14
 
 Firmware unchanged at 0.1.35.

@@ -44,6 +44,8 @@
 
 #if CONFIG_THBR_ENABLE_BORDER_ROUTER
 #include "mdns.h"
+
+void thbr_ble_proxy_start(const char *uri);
 #include "esp_openthread.h"
 #include "esp_openthread_border_router.h"
 #include "esp_openthread_lock.h"
@@ -382,6 +384,8 @@ void app_main(void)
      * and that is the failure that looks like a healthy border router from the
      * outside.  Only this task is watched: the idle tasks are deliberately not,
      * so a busy radio stack cannot trigger a reboot. */
+    thbr_ble_proxy_start(CONFIG_THBR_BLE_PROXY_URI);  /* leer ohne NimBLE */
+
     esp_err_t werr = esp_task_wdt_add(NULL);
     ESP_LOGI(TAG, "heartbeat registered with the task watchdog: %s", esp_err_to_name(werr));
 

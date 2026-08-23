@@ -9,6 +9,9 @@ Because the border router lives on the stick, the Thread network survives what
 happens on the host: restarting Home Assistant, updating the add-on, recreating
 the container. The mesh keeps running; only the path to it pauses.
 
+The stick also lends its Bluetooth radio to the Matter server, so a machine
+with no Bluetooth of its own can still commission a Matter device.
+
 Runs as a **Home Assistant add-on** or as a **plain Docker container** next to
 Home Assistant. Both are built from the same directory.
 
@@ -21,6 +24,13 @@ Home Assistant. Both are built from the same directory.
 - **Matter over Thread** — Home Assistant discovers the router, imports the
   network, and commissions devices through it. Firmware updates for those
   devices flow through it too.
+- **Commissioning over Bluetooth** — a Matter device is first talked to over
+  Bluetooth LE, before it has ever seen the Thread network. Servers, NUCs and
+  older machines often have no Bluetooth at all. The stick has, and it offers
+  that radio to the Matter server: the server drives the scan, the connection
+  and the exchange, and the stick carries them. Nothing to set up beyond
+  switching the Matter server's own `ble_proxy` option on — the stick dials in
+  and announces itself.
 - **A page in the sidebar** — firmware on the stick against the one the add-on
   carries, border routing state, memory, the route into the mesh and whether
   anything answers through it, plus a graph of the mesh you can pull around.
@@ -33,10 +43,11 @@ Home Assistant. Both are built from the same directory.
 ## Requirements
 
 - An ESP32-C6 with 4 MB flash, connected by its **native USB port**
-  (USB-Serial/JTAG). An ESP32-C5 also runs it, with about half the memory to
-  spare and a caveat described in [`addon/DOCS.md`](addon/DOCS.md); no C5 build
-  ships here. The ESP32-H2 cannot: Espressif ships no border-router library for
-  it.
+  (USB-Serial/JTAG). Firmware for the **ESP32-C5** ships alongside it and the
+  add-on writes whichever matches the chip it finds — but the C6 is what the
+  Bluetooth work was measured on, and the C5 carries a caveat described in
+  [`addon/DOCS.md`](addon/DOCS.md). The ESP32-H2 cannot run this: Espressif
+  ships no border-router library for it.
 - Home Assistant OS or Supervised, or Home Assistant in Docker on a host you
   control.
 
@@ -109,7 +120,7 @@ For Home Assistant in a container of your own. The image is on Docker Hub as
 `arm64` and `amd64`:
 
 ```
-docker pull tostmann/thbr:2026.8.14
+docker pull tostmann/thbr
 ```
 
 Take the `thbr` service from [`addon/compose.yaml`](addon/compose.yaml), point
@@ -126,8 +137,10 @@ Home Assistant ─ Matter server ─┐
                           add-on / container
                                 │  SLIP over CDC-ACM
                             ESP32-C6      (border router, on the chip)
-                                │  802.15.4
-                          Thread devices
+                             │         │
+                    802.15.4 │         │ Bluetooth LE
+                             │         │
+                  Thread devices       a device being commissioned
 ```
 
 The backbone between host and stick is a private point-to-point link
@@ -135,13 +148,27 @@ The backbone between host and stick is a private point-to-point link
 there with an ot-br-posix-compatible REST API and reports its own state on a
 second port.
 
+The Bluetooth path runs over the same backbone. The Matter server offers a
+websocket endpoint for a proxy radio, and the stick dials it: the server sends
+scan and connect commands, the stick answers with what its radio finds, and the
+commissioning exchange crosses in binary frames. On Home Assistant the Matter
+server publishes its port on the loopback interface only, which the stick — a
+hop away on the tap — cannot reach, so the add-on listens on the host end of
+the backbone and forwards. `THBR_MATTER_ADDR` says where to forward to and
+switches the whole thing off when empty.
+
 ## Building it yourself
 
 ```
 THBR_STAGE=2 scripts/build.sh      # firmware, with ESP-IDF
-scripts/dist.sh                    # collect the flash images into addon/firmware/
+scripts/dist.sh                    # collect the flash images into addon/firmware/<chip>/
 docker build -t thbr addon/        # the container image
 ```
+
+`sdkconfig.defaults` is layered: `.br` turns the border router on, `.ble` adds
+the Bluetooth proxy, `.c5` retargets the same sources at an ESP32-C5. Build
+once per chip; `scripts/dist.sh` files each build under its own chip, and the
+add-on picks the one matching the stick in front of it.
 
 Publishing a release builds both architectures natively and pushes them under
 the version in `addon/config.yaml`:

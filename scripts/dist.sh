@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Collect the flash images of the last build into addon/firmware/ and
+# Collect the flash images of the last build into addon/firmware/<chip>/ and
 # write the manifest the container flashes from.
+#
+# One directory per chip: the same add-on serves a C6 stick and a C5 one, and
+# it picks the bundle that matches the chip it finds on the port.  Run this
+# once per target; each run replaces only its own chip.
 #
 #   THBR_STAGE=2 scripts/build.sh && scripts/dist.sh
 #
@@ -24,6 +28,10 @@ fw = re.search(r'FW_VERSION_STRING\s+"([^"]+)"', ver).group(1)
 date = re.search(r'FW_BUILD_DATE\s+"([^"]+)"', ver).group(1)
 cfg = open(os.path.join(build, "config/sdkconfig.json")).read() if os.path.exists(os.path.join(build, "config/sdkconfig.json")) else open(os.path.join(root, "sdkconfig")).read()
 chip = re.search(r'IDF_TARGET"?[=:]\s*"([a-z0-9]+)"', cfg).group(1)
+
+# The bundle for this chip, and nothing else, lives here.
+out = os.path.join(out, chip)
+os.makedirs(out, exist_ok=True)
 
 lines = open(os.path.join(build, "flash_args")).read().split("\n")
 flash_args = lines[0].strip()

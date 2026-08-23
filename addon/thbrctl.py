@@ -28,6 +28,9 @@ Environment:
                      upgrade: also replace any other / older firmware
                      never:   never touch the flash
   THBR_PROBE_TIMEOUT seconds to wait for the stick after the pump starts (30)
+  THBR_MATTER_ADDR   Matter server the stick's BLE proxy dials, host:port,
+                     empty to switch the forwarder off        (127.0.0.1:5580)
+  THBR_MATTER_PORT   port the forwarder offers on the tap                (5580)
   THBR_WEB_ALLOW     who may reach the web interface: 'ingress' (Home
                      Assistant only), 'any', or a comma-separated list of
                      addresses/CIDRs.  Defaults to 'ingress' under the
@@ -84,6 +87,8 @@ ENV = {
     "sysctl_dir": os.environ.get("THBR_SYSCTL_DIR", "/hostsys"),
     "web_allow": os.environ.get("THBR_WEB_ALLOW", ""),
     "release": os.environ.get("THBR_VERSION", ""),
+    "matter_addr": os.environ.get("THBR_MATTER_ADDR", "127.0.0.1:5580"),
+    "matter_port": int(os.environ.get("THBR_MATTER_PORT", "5580")),
 }
 
 # Home Assistant add-on: the Supervisor writes the user's settings here.  They
@@ -130,13 +135,54 @@ def log(msg):
 
 # --------------------------------------------------------------------------- firmware bundle
 
-def load_manifest():
-    path = os.path.join(FW_DIR, "manifest.json")
-    with open(path) as fh:
+def _read_manifest(d):
+    with open(os.path.join(d, "manifest.json")) as fh:
         m = json.load(fh)
     for img in m["images"]:
-        img["path"] = os.path.join(FW_DIR, img["file"])
+        img["path"] = os.path.join(d, img["file"])
     return m
+
+
+def bundle_chips():
+    """Every firmware in the image, by the chip it is built for.
+
+    One stick is an ESP32-C6, another a C5, and the same add-on serves both —
+    so the bundle is a directory per chip.  A flat bundle (one manifest beside
+    its images) is still read as it always was; that is what a single-chip
+    build produces and what earlier images contain.
+    """
+    if os.path.exists(os.path.join(FW_DIR, "manifest.json")):
+        m = _read_manifest(FW_DIR)
+        return {normalise_chip(m["chip"]): m}
+    out = {}
+    for name in sorted(os.listdir(FW_DIR)):
+        d = os.path.join(FW_DIR, name)
+        if os.path.exists(os.path.join(d, "manifest.json")):
+            m = _read_manifest(d)
+            out[normalise_chip(m["chip"])] = m
+    return out
+
+
+def load_manifest(chip=None):
+    """The firmware to work with: the one for this chip, or the only one there is."""
+    bundles = bundle_chips()
+    if not bundles:
+        raise SystemExit(f"no firmware bundle in {FW_DIR}")
+    if chip and normalise_chip(chip) in bundles:
+        return bundles[normalise_chip(chip)]
+    if len(bundles) == 1:
+        return next(iter(bundles.values()))
+    if chip:
+        raise SystemExit(f"no bundled firmware for an {chip}; this image carries "
+                         + ", ".join(sorted(bundles)))
+    # Nothing to go on yet — any of them describes the release equally well.
+    return bundles[sorted(bundles)[0]]
+
+
+def bundle_summary():
+    bundles = bundle_chips()
+    fw = sorted({m["fw"] for m in bundles.values()})
+    return f"{'/'.join(fw)} for {', '.join(sorted(bundles))}"
 
 
 def verify_bundle(m):
@@ -727,6 +773,98 @@ def stop_pump(p):
 
 # --------------------------------------------------------------------------- firmware log relay
 
+def matter_relay():
+    """Let the stick reach the Matter server on the host's loopback interface.
+
+    The BLE proxy in the firmware is a websocket client: it dials a Matter
+    server and offers it a radio.  Under Home Assistant that server is another
+    add-on, and its port is published on loopback only — an address the stick
+    cannot reach, sitting a hop away on the tap.  Both ends are on this
+    machine, so the process that owns the tap listens on its host side and
+    carries the bytes across.  Nothing here understands websockets or Matter;
+    it is a pipe.
+
+    Off when THBR_MATTER_ADDR is empty.  Nothing is dialled until the stick
+    connects, so a missing or restarted Matter server costs one refused
+    connection and nothing else.
+    """
+    target = ENV["matter_addr"].strip()
+    if not target:
+        return
+    host, _, port = target.rpartition(":")
+    if not host or not port.isdigit():
+        log(f"THBR_MATTER_ADDR={target} is not host:port — forwarder off")
+        return
+    dest = (host, int(port))
+    host_ip = ENV["host_addr"].split("/")[0]
+
+    srv = None
+    while srv is None:
+        try:
+            t = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            t.bind((host_ip, ENV["matter_port"]))
+            t.listen(4)
+            srv = t
+        except OSError:
+            time.sleep(2.0)      # tap not up yet
+    log(f"BLE proxy forwarder: {host_ip}:{ENV['matter_port']} -> {dest[0]}:{dest[1]}")
+
+    def pump(src, dst, who, state):
+        err = None
+        try:
+            while True:
+                chunk = src.recv(8192)
+                if not chunk:
+                    break
+                dst.sendall(chunk)
+        except OSError as e:
+            err = e
+        finally:
+            # Whoever gets here first is the side that hung up.  A link that
+            # dies young is worth a line: it is the difference between "no
+            # Matter server" and "something keeps closing this".
+            if state["ended"] is None:
+                state["ended"] = (who, err, time.time() - state["start"])
+                w, e, secs = state["ended"]
+                if secs < 60:
+                    log(f"BLE proxy link closed by the {w} after {secs:.1f}s"
+                        + (f" ({e})" if e else ""))
+            for sk in (src, dst):
+                try: sk.shutdown(socket.SHUT_RDWR)
+                except OSError: pass
+
+    complained = [0.0]
+    while True:
+        try:
+            client, _ = srv.accept()
+        except OSError:
+            time.sleep(1.0)
+            continue
+        try:
+            upstream = socket.create_connection(dest, timeout=5)
+            # The dial timeout must not outlive the dial.  Left in place it
+            # applies to every recv as well, and this link is idle for minutes
+            # at a time — the connection died five seconds after the handshake,
+            # every time, and looked like the far end hanging up.
+            upstream.settimeout(None)
+            client.settimeout(None)
+        except OSError as e:
+            client.close()
+            now = time.time()
+            if now - complained[0] > 60:      # once a minute is plenty
+                complained[0] = now
+                log(f"the stick asked for the Matter server at {dest[0]}:{dest[1]} "
+                    f"and it did not answer ({e}) — is the Matter server add-on "
+                    f"running with its BLE proxy enabled?")
+            continue
+        state = {"start": time.time(), "ended": None}
+        for a, b, who in ((client, upstream, "stick"),
+                          (upstream, client, "Matter server")):
+            threading.Thread(target=pump, args=(a, b, who, state),
+                             daemon=True).start()
+
+
 def log_relay():
     """Print the stick's UDP log lines on our stdout, so `docker logs` has them."""
     host_ip = ENV["host_addr"].split("/")[0]
@@ -785,20 +923,25 @@ def check_target(m, force=False):
         log(f"NOT flashing: nothing on {port} answers as an Espressif chip — {err}")
         log("    Check the 'device' setting.  It must be the stick's own USB "
             "port; another serial device on this machine is left untouched.")
-        return False
+        return None
 
     if chip != normalise_chip(m["chip"]):
-        log(f"NOT flashing: {port} holds an {chip}, the bundled firmware is for "
-            f"{m['chip']}.")
-        log("    Either the wrong device is configured, or this board is not one "
-            "this firmware fits.")
-        return False
+        alt = bundle_chips().get(chip)
+        if alt is None:
+            log(f"NOT flashing: {port} holds an {chip}, and this image carries "
+                f"firmware for {', '.join(sorted(bundle_chips())) or m['chip']}.")
+            log("    Either the wrong device is configured, or this board is not "
+                "one this firmware fits.")
+            return None
+        m = alt
+        app_offset, our_project, our_version = bundled_app(m)
+        log(f"{port} holds an {chip}; taking the firmware bundled for it")
 
     named = mac_from_port(port)
     if named and mac and named != mac:
         log(f"NOT flashing: {port} is named after {named} but the chip answers "
             f"{mac} — the path points somewhere else than it claims.")
-        return False
+        return None
 
     if project and our_project and project != our_project:
         if not force:
@@ -811,7 +954,7 @@ def check_target(m, force=False):
             log("    If this really is the stick to convert, ask for it: "
                 "`thbrctl flash --force`, or the update button on the add-on's "
                 "page.")
-            return False
+            return None
         log(f"forced: replacing the application '{project}' on {port}")
 
     known = f"target confirmed: {chip}"
@@ -820,13 +963,14 @@ def check_target(m, force=False):
     if project:
         known += f", carrying '{project}'" + (f" {version}" if version else "")
     log(known)
-    return True
+    return m
 
 
 def flash(m, force=False):
     """Write all bundled images.  The port must be free (pump stopped)."""
     verify_bundle(m)
-    if not check_target(m, force):
+    m = check_target(m, force)
+    if m is None:
         return False
     cmd = [sys.executable, "-m", "esptool",
            "--chip", m["chip"], "--port", ENV["device"], "--baud", "921600",
@@ -958,8 +1102,8 @@ def cmd_run():
     if ENV["policy"] not in ("auto", "upgrade", "never"):
         raise SystemExit(f"THBR_FLASH={ENV['policy']} is not one of auto|upgrade|never")
     m = load_manifest()
-    log(f"THBR {ENV['release'] or 'dev'}; bundled firmware {m['fw']} "
-        f"({m['build']}, {m['chip']}); policy {ENV['policy']}")
+    log(f"THBR {ENV['release'] or 'dev'}; bundled firmware {bundle_summary()}; "
+        f"policy {ENV['policy']}")
     adopt_port()
     os.makedirs(RUN_DIR, exist_ok=True)
     for f in (REQ_FILE, RES_FILE):
@@ -969,6 +1113,7 @@ def cmd_run():
         fh.write(str(os.getpid()))
 
     threading.Thread(target=log_relay, daemon=True).start()
+    threading.Thread(target=matter_relay, daemon=True).start()
 
     # The web face, served through Home Assistant's ingress.
     try:
@@ -1002,6 +1147,13 @@ def cmd_run():
     kind, info = wait_probe(ENV["probe_timeout"], pump)
     if kind == "thbr":
         log(f"stick answers: THBR {info.get('fw')} ({info.get('build')})")
+        # Now that the chip is known, work from its bundle.  Until here any of
+        # them would do; from here the wrong one would refuse the stick as the
+        # wrong chip and quietly decline to flash it.
+        if info.get("chip"):
+            alt = bundle_chips().get(normalise_chip(info["chip"]))
+            if alt is not None:
+                m = alt
     elif kind == "rest":
         log("stick answers on port 80 only (no THBR info API)")
     else:
@@ -1155,8 +1307,7 @@ def cmd_flash(args):
 
 
 def cmd_version():
-    m = load_manifest()
-    print(f"bundled:   THBR {m['fw']} ({m['build']}, {m['chip']})")
+    print(f"bundled:   THBR {bundle_summary()}")
     kind, info = probe()
     if kind == "thbr":
         print(f"installed: THBR {info.get('fw')} ({info.get('build')}, {info.get('chip')}, mac {info.get('mac')})")

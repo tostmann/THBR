@@ -3,6 +3,7 @@
 /sdkconfig.old
 /sdkconfig.*.old
 /sdkconfig.c5
+/sdkconfig.ble
 /dependencies.lock
 /managed_components/
 /build/
