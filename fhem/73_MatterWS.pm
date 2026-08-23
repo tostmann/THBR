@@ -210,8 +210,11 @@ sub MatterWS_Attribute {
 sub MatterWS_Set {
     my ($hash, @a) = @_;
     my $name = shift @a;
-    return "set $name needs <node> <command>" if (@a < 2);
     my ($node, $cmd, $arg) = @a;
+    # FHEMWEB asks with a single "?" to learn which widgets to draw, so the
+    # list has to be reachable before anything counts arguments.  It was not,
+    # and the pairing field never appeared.
+    $node = "?" if (!defined $node);
 
     # Commissioning is not addressed to a node — there is no node yet.
     if ($node eq "pair") {
@@ -234,6 +237,8 @@ sub MatterWS_Set {
         # numbers exist is not something this list can know.
         return "Unknown argument $node, choose one of pair:textField";
     }
+
+    return "set $name needs <node> <command>" if (!defined $cmd);
 
     # Endpoint 1 is where a light lives on every device seen so far; an
     # attribute makes it changeable without touching the code when one turns

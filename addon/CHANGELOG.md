@@ -4,6 +4,18 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.25
+
+Firmware unchanged at 0.1.38.
+
+- **The FHEM module's pairing field now appears.** FHEMWEB asks a device which
+  commands it has by calling `set` with a single `?`; the module counted its
+  arguments first and answered with a usage line, so the web interface drew no
+  input at all — including the field for the pairing code the module exists to
+  offer. Pairing a device from FHEM has since been done end to end: the command
+  goes out of FHEMWEB, the stick carries the Bluetooth, and the node turns up
+  as readings.
+
 ## 2026.8.24
 
 Firmware unchanged at 0.1.38.
