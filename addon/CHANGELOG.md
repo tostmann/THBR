@@ -4,6 +4,26 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.29
+
+Firmware 0.1.40.
+
+- **The stick could stop connecting over Bluetooth until it was restarted.**
+  Two attempts that ended without a link and both connection slots were gone —
+  the next request was refused with "no free connection slot" while the device
+  sat there being discovered. A connect event that arrived when nothing was
+  waiting for it was dropped, keeping the slot and, on success, a link nobody
+  would ever close; and losing the link to the Matter server left every
+  connection standing although the server had forgotten them. Both are
+  released now. It took a third device to hit this.
+- **A restarted Matter server left the stick silent.** The client library is
+  supposed to notice and dial again; measured twice, it did not — no event, no
+  retry, and only a reboot of the stick brought it back. Since a Matter server
+  restarts on every one of its own updates, this cannot need a human. The link
+  is never quiet by itself, so a minute without a single frame is now taken as
+  a dead link and dialled again from the side that owns the socket. Measured:
+  noticed after 63 seconds, reconnected and shook hands on its own.
+
 ## 2026.8.28
 
 Firmware unchanged at 0.1.38.

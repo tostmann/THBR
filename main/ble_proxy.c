@@ -51,7 +51,10 @@ static const char *TAG = "ble_proxy";
  * filled by discover_characteristics and then used by everything that names a
  * characteristic by UUID — the server never sees a handle. */
 typedef struct {
-    bool     in_use;
+    bool     in_use;      /* the slot is taken */
+    bool     live;        /* ... and a link actually stands.  Handle 0 is a
+                           * valid connection handle, so "conn is unset"
+                           * cannot be used to tell the two apart. */
     uint16_t conn;             /* NimBLE connection handle */
     uint16_t proxy;            /* the handle we handed to the server */
     uint16_t mtu;
@@ -141,6 +144,8 @@ static bool s_scanning;
 static bool s_was_connected;      /* to report a lost link, not a missing one */
 static int64_t s_quiet_since;     /* when the last "no server" line went out */
 static char s_uri[128];
+static int64_t s_last_rx;        /* any frame from the server, pongs included */
+static int64_t s_said_stuck;     /* so the watchdog complains once, not always */
 static uint8_t s_own_addr_type;
 
 /* ------------------------------------------------------------------ senden */
@@ -212,8 +217,36 @@ static conn_t *conn_by_proxy(int h)
 static conn_t *conn_by_nimble(uint16_t h)
 {
     for (int i = 0; i < MAX_CONN; i++)
-        if (s_conn[i].in_use && s_conn[i].conn == h) return &s_conn[i];
+        if (s_conn[i].in_use && s_conn[i].live && s_conn[i].conn == h) return &s_conn[i];
     return NULL;
+}
+
+/* A slot taken for a connection attempt that never became one.  Freeing it is
+ * not optional: two attempts that end this way and the stick can never connect
+ * again until it restarts — which is exactly what happened. */
+static void conn_drop_pending(void)
+{
+    for (int i = 0; i < MAX_CONN; i++)
+        if (s_conn[i].in_use && !s_conn[i].live) {
+            ESP_LOGW(TAG, "releasing a connection slot nothing came of");
+            s_conn[i].in_use = false;
+        }
+}
+
+/* Everything goes when the link to the Matter server does.  The server has
+ * forgotten these connections; keeping them holds both slots and leaves the
+ * peripheral in a session no one will ever continue. */
+static void conn_release_all(const char *why)
+{
+    for (int i = 0; i < MAX_CONN; i++) {
+        if (!s_conn[i].in_use) continue;
+        if (s_conn[i].live) {
+            ESP_LOGW(TAG, "closing connection %u: %s", s_conn[i].conn, why);
+            ble_gap_terminate(s_conn[i].conn, BLE_ERR_REM_USER_CONN_TERM);
+        }
+        s_conn[i].in_use = false;
+        s_conn[i].live   = false;
+    }
 }
 
 static conn_t *conn_alloc(void)
@@ -704,15 +737,29 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         send_event("scan_stopped", cJSON_CreateObject());
         break;
 
-    case BLE_GAP_EVENT_CONNECT:
-        if (s_op.kind != OP_CONNECT || !s_op.c) break;
+    case BLE_GAP_EVENT_CONNECT: {
+        bool expected = (s_op.kind == OP_CONNECT && s_op.c);
         if (event->connect.status != 0) {
             ESP_LOGW(TAG, "connect failed, status %d", event->connect.status);
-            s_op.c->in_use = false;
-            op_fail("connection_failed", "connect failed");
+            if (expected) {
+                s_op.c->in_use = false;
+                op_fail("connection_failed", "connect failed");
+            } else {
+                conn_drop_pending();
+            }
+            break;
+        }
+        if (!expected) {
+            /* A link nobody is waiting for any more — the request timed out or
+             * the server went away while it was being made.  Left standing it
+             * would hold a slot for good, so it goes. */
+            ESP_LOGW(TAG, "connected to a peer nobody is waiting for, closing");
+            ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            conn_drop_pending();
             break;
         }
         ESP_LOGI(TAG, "connected, handle %u", event->connect.conn_handle);
+        s_op.c->live = true;
         s_op.c->conn = event->connect.conn_handle;
         s_op.c->mtu  = ble_att_mtu(event->connect.conn_handle);
         /* Ask for a bigger ATT_MTU before answering.  The transport slices its
@@ -732,6 +779,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             reply_ok(id, res);
         }
         break;
+    }
 
     case BLE_GAP_EVENT_DISCONNECT: {
         conn_t *c = conn_by_nimble(event->disconnect.conn.conn_handle);
@@ -741,6 +789,7 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             cJSON_AddStringToObject(d, "reason", "peripheral disconnected");
             send_event("disconnected", d);
             c->in_use = false;
+            c->live   = false;
         }
         break;
     }
@@ -900,7 +949,7 @@ static void handle_command(cJSON *msg)
         /* The slot is released when the disconnect event arrives, not here:
          * letting it go early would hand the same handle to a new connection
          * while the old link is still coming down. */
-        if (rc == BLE_HS_ENOTCONN) c->in_use = false;
+        if (rc == BLE_HS_ENOTCONN) { c->in_use = false; c->live = false; }
         reply_ok(id, NULL);
         return;
     }
@@ -1094,6 +1143,8 @@ static void ws_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     case WEBSOCKET_EVENT_CONNECTED: {
         s_was_connected = true;
         s_quiet_since = 0;
+        s_last_rx     = esp_timer_get_time();
+        s_said_stuck  = 0;
         ESP_LOGI(TAG, "connected to the Matter server, saying hello");
         cJSON *o = cJSON_CreateObject();
         cJSON_AddStringToObject(o, "type", "hello");
@@ -1102,6 +1153,10 @@ static void ws_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         break;
     }
     case WEBSOCKET_EVENT_DATA: {
+        /* Any frame at all counts as a sign of life — a pong says as much
+         * about the link as a command does, and the watchdog below needs
+         * something it can observe. */
+        s_last_rx = esp_timer_get_time();
         /* Copy and hand over.  Nothing is parsed and nothing is answered here:
          * this runs in the client's own event handler, where sending is not
          * allowed. */
@@ -1137,6 +1192,7 @@ static void ws_event(void *arg, esp_event_base_t base, int32_t id, void *data)
             ble_gap_disc_cancel();
             s_scanning = false;
         }
+        conn_release_all("the Matter server is gone");
         break;
     default:
         break;
@@ -1164,12 +1220,43 @@ static void host_task(void *param)
 
 /* The only place that touches the socket for sending, and the only place that
  * runs BLE operations on behalf of a command. */
+/* The client library is supposed to notice a dead link and dial again.  It does
+ * not always: a Matter server restarted underneath it leaves this side holding
+ * a socket it still believes in, silent for as long as it runs — measured, and
+ * only a reboot of the stick brought it back.  A server restarts on every one
+ * of its own updates, so this cannot need a human.
+ *
+ * The link is never quiet for long by itself: this side pings every ten
+ * seconds and a live server answers.  A minute without a single frame is
+ * therefore a dead link, whatever the library thinks, and it gets taken down
+ * and dialled again from here — this task owns the socket, which is where
+ * stopping and starting it is allowed. */
+#define WS_SILENCE_LIMIT_US   (60 * 1000000LL)
+
+static void ws_watchdog(void)
+{
+    if (!s_ws || !s_last_rx) return;
+    int64_t quiet = esp_timer_get_time() - s_last_rx;
+    if (quiet < WS_SILENCE_LIMIT_US) return;
+
+    if (s_said_stuck == 0 || esp_timer_get_time() - s_said_stuck > 300 * 1000000LL) {
+        ESP_LOGW(TAG, "no word from the Matter server for %llds — reconnecting",
+                 (long long)(quiet / 1000000));
+        s_said_stuck = esp_timer_get_time();
+    }
+    conn_release_all("the link to the Matter server went quiet");
+    s_last_rx = esp_timer_get_time();          /* give the new attempt its own minute */
+    esp_websocket_client_close(s_ws, pdMS_TO_TICKS(2000));
+    esp_websocket_client_stop(s_ws);
+    esp_websocket_client_start(s_ws);
+}
+
 static void proxy_task(void *arg)
 {
     (void)arg;
     msg_t m;
     for (;;) {
-        if (xQueueReceive(s_q, &m, portMAX_DELAY) != pdTRUE) continue;
+        if (xQueueReceive(s_q, &m, pdMS_TO_TICKS(5000)) != pdTRUE) { ws_watchdog(); continue; }
         switch (m.kind) {
         case MSG_IN_TEXT:
             handle_text((const char *)m.data, (int)m.len);

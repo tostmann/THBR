@@ -3,7 +3,7 @@
 # the two lines that matter for THBR.
 services:
   thbr:
-    image: tostmann/thbr:2026.8.28   # multi-arch (arm64, amd64); or build
+    image: tostmann/thbr:2026.8.29   # multi-arch (arm64, amd64); or build
                                    # your own: docker build -t thbr addon/
     container_name: thbr
     restart: unless-stopped
