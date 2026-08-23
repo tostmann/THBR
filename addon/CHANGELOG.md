@@ -4,6 +4,19 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.27
+
+Firmware unchanged at 0.1.38.
+
+- `fhem/README.md` is now a walkthrough rather than a module description: from
+  an IKEA lamp in its box to a switch in FHEM, including installing and running
+  the Matter server, and the step that is easy to miss — handing the server the
+  Thread network, without which a commissioning runs through certificates and
+  fabric and then fails at the last moment. A section on what to do when
+  pairing fails names the four messages that actually turned up while getting
+  there. The modules are stated to be examples and a base for others to build
+  on, with their gaps listed.
+
 ## 2026.8.26
 
 Firmware unchanged at 0.1.38.
