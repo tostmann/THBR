@@ -124,197 +124,129 @@ No Wi-Fi/Thread network credentials are configured for commissioning
 because the server has no idea which Thread network to send the device to. The
 border router knows; hand it over once.
 
-Read the active dataset from the stick:
+The border router knows the network; the server has to be told once. Both ends
+speak for themselves — the stick over its REST API, the server over the
+websocket the FHEM module will later use — so a dozen lines are enough, and
+this needs no FHEM module at all:
 
-```
-curl -H "Accept: text/plain" http://192.168.45.2/node/dataset/active
+```python
+import base64, json, os, socket, struct, urllib.request
+HOST, PORT = "matter-host", 5580        # the Matter server
+STICK      = "192.168.45.2"             # the border router
+
+ds = urllib.request.urlopen(urllib.request.Request(
+        f"http://{STICK}/node/dataset/active",
+        headers={"Accept": "text/plain"})).read().decode().strip()
+
+s = socket.create_connection((HOST, PORT), timeout=10)
+s.sendall((f"GET /ws HTTP/1.1\r\nHost: {HOST}:{PORT}\r\nUpgrade: websocket\r\n"
+           "Connection: Upgrade\r\n"
+           f"Sec-WebSocket-Key: {base64.b64encode(os.urandom(16)).decode()}\r\n"
+           "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+buf = b""
+while b"\r\n\r\n" not in buf:
+    buf += s.recv(4096)
+
+p = json.dumps({"message_id": "1", "command": "set_thread_dataset",
+                "args": {"dataset": ds}}).encode()
+mask = os.urandom(4)
+s.sendall(struct.pack("!BBH", 0x81, 0x80 | 126, len(p)) + mask +
+          bytes(b ^ mask[i % 4] for i, b in enumerate(p)))
+print(f"dataset of {len(ds)} characters handed over")
 ```
 
-and give it to the server — from FHEM, once the device below is defined:
-
-```
-{ MatterWS_Send($defs{MatterWS}, { command => "set_thread_dataset",
-                                   args => { dataset => "0e08...18" } }) }
-```
+The frame header above assumes the message is longer than 125 bytes, which it
+always is: the dataset alone is around 220 characters.
 
 `thread_credentials_set` in the server's greeting turns `true` and stays that
 way across restarts. Under Home Assistant this happens by itself; on a plain
 host it does not.
 
-## 4. FHEM
+## 4. Pairing
 
-Copy both modules in and tell FHEM about them:
+This is where the stick earns its second job, so it is worth understanding
+rather than following.
 
-```
-cp 73_MatterWS.pm 74_MatterDevice.pm /opt/fhem/FHEM/
-```
-```
-reload 73_MatterWS.pm
-reload 74_MatterDevice.pm
-```
+A Matter device that has just come out of its box is on no network at all. It
+cannot be talked to over Thread, because it has not been told which Thread
+network to join — that is what pairing is for. So the first conversation
+happens over **Bluetooth LE**, and only at the end of it does the device
+receive the Thread credentials, join the mesh, and become reachable over IP.
 
-Define the connection, host and port as yours are:
+Which means a machine without Bluetooth cannot pair a Thread device, however
+good its Matter server is. Servers, most NUCs and virtual machines have none.
+The stick does, and it lends it: the Matter server drives the scan, the
+connection and the whole exchange, and the stick carries them over the air.
+Nothing about this is configured in FHEM — it happens a layer below.
 
-```
-define MatterWS MatterWS ws:matter-host:5580/ws
-attr MatterWS room Matter
-attr MatterWS webCmd pair
-attr MatterWS webCmdLabel Pairing code
-```
+**Where the code comes from.** A factory-new device carries an 11-digit code on
+the box or the device. A device that is already paired somewhere else does not
+use that code any more: its owner has to open a commissioning window, which
+produces a fresh one.
 
-`STATE` goes to `listening`, and the readings `sdkVersion`, `fabricId` and
-`nodes` say what it found. If it stays `disconnected`, nothing is listening at
-that address.
+**Doing it.** The commissioning is the Matter server's job. Its own page on the
+port from step 2 has the field for the code, and it is also what a FHEM module
+asks for you.
 
-## 5. Pair a device
-
-Put the device into pairing mode the way its manual says — factory-new IKEA
-devices are already in it — and give FHEM the code from the box:
+What then happens, and what the logs show while it does:
 
 ```
-set MatterWS pair 1234-567-8901
+Discovered commissionable device … via proxy      the stick's radio found it
+Connected to …, BTP segment size=244 bytes        a link, and a useful one
+  (peripheral ATT_MTU up to 247)
+operationalCredentials.addNoc  statusCode: 0      the device accepts the fabric
+NetworkCommissioning.Thread                       here the Thread credentials go over
+connectNetwork  networkingStatus: 0               the device joins the mesh
+commissioningComplete  errorCode: 0
 ```
 
-The `pairing` reading follows: `running`, then `node 18 added`, or `failed: …`
-with the server's own words. It takes a minute or two: Bluetooth first, then
-the device joins the Thread mesh and the rest happens over that.
+The session identifier in the server's log loses its `(ble)` mark around the
+`Reconnect` step: from there the device is reached over Thread, and Bluetooth
+is done with. Measured here, a run takes about twenty seconds.
 
-The Matter server's own web page on the same port does the same thing if you
-prefer clicking, and shows the same fabric.
+The larger ATT_MTU in the second line matters more than it looks. A fresh
+Bluetooth link starts at 23 bytes, which cuts every certificate into 20-byte
+pieces — hundreds of round trips on a radio that also has Thread to serve, and
+the exchange stalls. The stick asks for a bigger one before reporting the link,
+and the transport then uses 244.
 
-## 6. What appears
+## 5. Handing over to FHEM
 
-Nothing below was defined by hand. `autocreate` made both devices from the
-first message each node sent.
+At this point the device is on the Thread network and the Matter server knows
+it. Everything after — a FHEM device per node, readings, switches — is the job
+of a FHEM module talking to that same server.
 
-```
-define Matter_18 MatterDevice 18
-attr   Matter_18 alias KAJPLATS GU10 CWS 470lm
+[**fhem-matter**](https://gitlab.com/zeppelin1979/fhem-matter) does that. It
+was tested here against the setup above: it connects to the server, creates a
+device per node and endpoint, and switches a lamp. It is installed through
+FHEM's own update mechanism and is developed in the
+[FHEM forum thread on Matter](https://forum.fhem.de/index.php?topic=127702).
 
-   Internals:  NODE 18   IODev MatterWS   STATE on
-   Readings:   state                on
-               ep1_onoff            on
-               ep1_brightness       254
-               ep1_colorMode        2
-               ep1_colorTempMireds  370
-               0_40_1               IKEA of Sweden
-               0_40_3               KAJPLATS GU10 CWS 470lm
-```
-
-```
-define Matter_17 MatterDevice 17
-attr   Matter_17 alias BILRESA dual button
-
-   Internals:  NODE 17   IODev MatterWS   STATE present
-   Readings:   0_40_3               BILRESA dual button
-               1_59_0               2      <- switch, endpoint 1
-               2_59_0               2      <- switch, endpoint 2
-```
-
-The alias comes from the product name the device reports, so the list reads
-like the shelf the things came from.
-
-Readings are `ep<endpoint>_<what>` for the clusters the module knows — `onoff`,
-`brightness`, `colorTempMireds`, `colorMode`, `localTemperature` — and
-`<endpoint>_<cluster>_<attribute>` for everything else. Nothing is dropped;
-extending the first list is a two-line change in `73_MatterWS.pm`.
-
-## 7. Switching the lamp
-
-```
-set Matter_18 on
-set Matter_18 off
-set Matter_18 toggle
-set Matter_18 pct 40
-```
-
-Buttons in the room view:
-
-```
-attr Matter_18 webCmd on:off:toggle:pct
-attr Matter_18 devStateIcon on:light_light_dim_100 off:light_light_dim_00
-attr Matter_18 room Matter
-```
-
-A device whose switch is not on endpoint 1 — none seen so far — takes
-`attr <name> endpoint <n>`.
-
-## 8. The button switching the lamp
-
-A press is a moment, not a state: `CurrentPosition` is back to zero before
-anything could act on it. So presses arrive as Matter events, and the module
-turns the ones that mean a finished gesture into a reading:
-
-| reading                | when                          |
-|------------------------|-------------------------------|
-| `ep<n>_press single`   | a press, released             |
-| `ep<n>_press multi2`   | pressed twice, and so on      |
-| `ep<n>_press long`     | held                          |
-
-One press produces three Matter events — InitialPress, ShortRelease,
-MultiPressComplete — so acting on all of them would fire three times. Only the
-completed gesture is passed on, once.
-
-The two buttons of a BILRESA are endpoints 1 and 2. Which one is up depends on
-how it hangs; press one and watch which reading moves.
-
-```
-define bilresa_on  notify Matter_17:ep1_press:.single set Matter_18 on
-define bilresa_off notify Matter_17:ep2_press:.single set Matter_18 off
-```
-
-Measured here, from two separate FHEM logs:
-
-```
-20:25:33  Matter_17  ep1_press: single   ->   20:25:33  Matter_18  on
-20:25:35  Matter_17  ep2_press: single   ->   20:25:35  Matter_18  off
-```
-
-Dimming on a long press is the same shape with `pct` instead of `on`.
-
-Remember `save` — everything defined above lives only until FHEM restarts.
+It commissions over the network only, so pairing a factory-new Thread device
+stays step 4 above — the two fit together rather than overlap.
 
 ## When pairing fails
 
-- **`failed: … discovery of node with discriminator N failed`** — the Bluetooth
-  side found nothing. Either the device is not in pairing mode any more (the
-  window closes after a few minutes), or the Matter server has no proxy radio.
-  Its log says `BLE proxy not connected, waiting up to 30000ms for client` when
-  the stick never dialled in.
-- **The stick logs `no Matter server at ws://192.168.45.1:5580/ble`** — it
-  dials the host end of its own backbone. Something has to answer there: either
-  the Matter server itself, listening on every interface, or the THBR add-on
-  forwarding to it. If another service holds that port, the add-on says so by
-  name.
-- **`No Wi-Fi/Thread network credentials are configured`** — step 2 was
-  skipped.
-- **`failed: Commission failed: Invalid checksum`** — the code was mistyped.
-
-## What these modules do not do
-
-Named plainly, because they are examples and the gaps are where the work is:
-
-- **Colour is read, not written.** `ep1_colorTempMireds` and `ep1_colorMode`
-  arrive; there is no `set` for them.
-- **A node that stops answering looks like one that answers.** The server knows
-  (`available`); the device does not show it. A node unpaired at the server
-  stays in FHEM until you `delete` it.
-- **Only OnOff and LevelControl are driven.** Thermostats, covers, sensors and
-  everything else arrive as readings and can be read, but have no `set`.
-- **No `get`.** Values arrive when the device sends them.
-
-Unpairing, when you want it:
-
-```
-{ MatterWS_Send($defs{MatterWS}, { command => "remove_node",
-                                   args => { node_id => 18 } }) }
-delete Matter_18
-```
+- **`discovery of node with discriminator N failed`** — the Bluetooth side
+  found nothing usable. Either the device is no longer in pairing mode (the
+  window closes after a few minutes), or the code does not belong to the device
+  that is advertising. The server's log names the discriminator it derived from
+  the code; a scan shows what the device actually advertises, and the two have
+  to match.
+- **`BLE proxy not connected, waiting up to 30000ms for client`** in the Matter
+  server's log — no stick offered its radio. It dials the host end of its own
+  backbone, and something has to answer there: the Matter server itself,
+  listening on every interface, or the add-on forwarding to it. If another
+  service holds that port, the add-on says so by name.
+- **`No Wi-Fi/Thread network credentials are configured`** — step 3 was
+  skipped. The exchange runs all the way through certificates and fabric before
+  this shows up, which makes it look like a late failure rather than a missing
+  setting.
+- **`Commission failed: Invalid checksum`** — the code was mistyped.
 
 ## Scope
 
-One Matter server, one lamp, one button, one evening. Pairing, autocreate,
-switching and the button driving the lamp were all done on that hardware, and
-the output above is what it produced. Everything else is untried, and these
-modules are meant as a base for the community to build on rather than as a
-finished thing.
+One Matter server, a handful of IKEA devices, one evening. The steps above were
+walked on that hardware and the output is what it produced. This document ends
+where FHEM begins, on purpose: the border router and the radio are what this
+project is for.

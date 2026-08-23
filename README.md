@@ -151,10 +151,12 @@ Pairing then happens in the server's own web page on that port: it takes the
 pairing code and drives the commissioning, and the Bluetooth for it comes from
 the stick.
 
-For **FHEM**, [`fhem/73_MatterWS.pm`](fhem/73_MatterWS.pm) connects to the same
-server and turns its devices into FHEM readings and `set` commands, pairing
-included (`set <name> pair <code>`). It is a small module, tested against one
-server and one lamp — treat it as a starting point, not a finished driver.
+For **FHEM**, [`fhem/README.md`](fhem/README.md) walks the whole way from a
+factory-new IKEA device to the point where FHEM takes over: the stick, the
+Matter server, the Thread credentials it needs, and the pairing itself. The
+FHEM side beyond that — devices, readings, switches — is
+[fhem-matter](https://gitlab.com/zeppelin1979/fhem-matter), which talks to the
+same server.
 
 ## How it fits together
 

@@ -4,6 +4,26 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.30
+
+Firmware unchanged at 0.1.40.
+
+- **The two FHEM example modules are gone, and the walkthrough now ends where
+  FHEM begins.** They came out of testing and were never the point: a FHEM
+  module for Matter already exists and is further along —
+  [fhem-matter](https://gitlab.com/zeppelin1979/fhem-matter), which talks to
+  the same Matter server, is installed through FHEM's own update mechanism, and
+  was tested here against this setup. Two modules in one niche help nobody, and
+  a border router is what this project is for.
+- What the walkthrough keeps is the part that belongs to it and holds whichever
+  FHEM module someone picks: the stick, the Matter server, the Thread
+  credentials it has to be given, and the pairing. Pairing has its own chapter
+  now, because it is the one step that cannot happen without the stick's second
+  radio: a device fresh out of its box is on no network, so the first
+  conversation is over Bluetooth, and only at the end of it does it learn the
+  Thread network. Handing the server the Thread credentials no longer needs a
+  FHEM module either — the recipe is a dozen lines against the two APIs.
+
 ## 2026.8.29
 
 Firmware 0.1.40.
