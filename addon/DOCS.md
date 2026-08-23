@@ -145,6 +145,14 @@ and from then on the Matter server drives scanning and connecting through the
 stick's radio. Its log names what it uses: lines reading `via proxy` and
 `ProxyBleChannel` mean the stick carried the exchange.
 
+Not every Matter server can do this. `ghcr.io/matter-js/matterjs-server:stable`
+accepts a proxy radio when started with `--ble-proxy`, and the Matter Server
+add-on is built on it. `ghcr.io/home-assistant-libs/python-matter-server` does
+not — its greeting reports no proxy support. The add-on asks whatever answers
+on the address the stick dials and says which of the two it found, so this
+shows up as a sentence in the log rather than as a commissioning that fails for
+no visible reason.
+
 Two details that matter if something looks wrong:
 
 - The Matter server publishes its port on the loopback interface only, and the
@@ -152,6 +160,11 @@ Two details that matter if something looks wrong:
   add-on listens on the host end of the backbone and forwards. Set
   `THBR_MATTER_ADDR` if the server is somewhere else than `127.0.0.1:5580`, or
   leave it empty to switch the forwarder off entirely.
+- A server run as an ordinary container usually listens on every interface,
+  which already covers the address the stick dials. Then no forwarding is
+  needed and the add-on says so instead of trying. If something else holds that
+  port, it says that too, and names it as the problem — the stick would
+  otherwise dial into the wrong service and report no Matter server at all.
 - If no Matter server is reachable, the stick keeps trying and says so once a
   minute, naming the address it dials. That line is not an error in itself —
   it is what a stick on a machine without a Matter server does.

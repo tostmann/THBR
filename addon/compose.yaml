@@ -3,7 +3,7 @@
 # the two lines that matter for THBR.
 services:
   thbr:
-    image: tostmann/thbr:2026.8.23   # multi-arch (arm64, amd64); or build
+    image: tostmann/thbr:2026.8.24   # multi-arch (arm64, amd64); or build
                                    # your own: docker build -t thbr addon/
     container_name: thbr
     restart: unless-stopped
@@ -40,6 +40,25 @@ services:
       # Docker, because there is no ingress here to authenticate against.
       THBR_WEB_ALLOW: any
 
+  # Matter itself is spoken by a Matter server, not by the border router.  This
+  # one accepts the stick's radio for commissioning; the python implementation
+  # does not.  Listening on every interface means the stick reaches it over the
+  # backbone directly and the add-on does not have to forward.
+  matter-server:
+    image: ghcr.io/matter-js/matterjs-server:stable
+    container_name: matter-server
+    restart: unless-stopped
+    network_mode: host           # mDNS and IPv6 into the mesh
+    command: >-
+      --storage-path /data
+      --port 5580
+      --primary-interface tap0
+      --ble-proxy
+    volumes:
+      - matter-data:/data
+    depends_on:
+      - thbr
+
   homeassistant:
     image: ghcr.io/home-assistant/home-assistant:stable
     network_mode: host
@@ -55,3 +74,4 @@ services:
 
 volumes:
   thbr-data:
+  matter-data:

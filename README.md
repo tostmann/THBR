@@ -129,6 +129,33 @@ step 5 and 6 above — they are the same for both ways of running it.
 [`addon/README.md`](addon/README.md) has the details, including what the
 container needs from the host and why.
 
+## Matter without Home Assistant
+
+The border router carries IPv6 into the Thread mesh; Matter itself is spoken by
+a Matter server, and that server runs perfectly well without Home Assistant.
+Two things are worth knowing before choosing one.
+
+**Which server.** Commissioning over the stick's Bluetooth radio needs a server
+that accepts a proxy radio. `ghcr.io/matter-js/matterjs-server:stable` does,
+started with `--ble-proxy`. `ghcr.io/home-assistant-libs/python-matter-server`
+does not — its greeting reports no proxy support, and the stick's offer is
+turned away. If the add-on finds a server on the address the stick dials, it
+says which of the two it is rather than leaving you to guess.
+
+**Where it listens.** The stick dials `192.168.45.1:5580`, the host end of its
+own backbone. A server published on every interface already covers that, and
+the stick reaches it directly. Only when the server is reachable on loopback
+alone — which is what Home Assistant does — does the add-on forward.
+
+Pairing then happens in the server's own web page on that port: it takes the
+pairing code and drives the commissioning, and the Bluetooth for it comes from
+the stick.
+
+For **FHEM**, [`fhem/73_MatterWS.pm`](fhem/73_MatterWS.pm) connects to the same
+server and turns its devices into FHEM readings and `set` commands, pairing
+included (`set <name> pair <code>`). It is a small module, tested against one
+server and one lamp — treat it as a starting point, not a finished driver.
+
 ## How it fits together
 
 ```

@@ -42,6 +42,8 @@ without being asked (THBR_FLASH=upgrade or `thbrctl flash`).  A stick that
 answers nothing is either new, carries an RCP image, or is broken — the one
 case where flashing is the obvious next step.
 """
+import base64
+import errno
 import hashlib
 import ipaddress
 import json
@@ -117,7 +119,11 @@ if os.path.exists(OPTIONS_FILE):
 
 def log(msg):
     line = f"{time.strftime('%H:%M:%S')} [thbr] {msg}"
-    print(line, flush=True)
+    # One write, newline included: print() emits the text and the newline
+    # separately, and two threads logging at once then run into each other —
+    # which they now do, the forwarder having a thread of its own.
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
     # Mirrored to a file as well: the add-on log is dominated by the stick's own
     # output, and the web page needs our side of the story.
     try:
@@ -773,6 +779,51 @@ def stop_pump(p):
 
 # --------------------------------------------------------------------------- firmware log relay
 
+def matter_greeting(host, port, timeout=4.0):
+    """What answers on this address, in its own words.
+
+    A Matter server greets every new websocket client before being asked
+    anything, and that greeting says which implementation it is and whether it
+    accepts a proxy radio.  Both matter here: a server without the proxy looks
+    exactly like a working one until the first commissioning fails.  Returns
+    the greeting, or None when nothing Matter-shaped answers.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as c:
+            c.settimeout(timeout)
+            key = base64.b64encode(os.urandom(16)).decode()
+            c.sendall((f"GET /ws HTTP/1.1\r\nHost: {host}:{port}\r\n"
+                       "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                       f"Sec-WebSocket-Key: {key}\r\n"
+                       "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                chunk = c.recv(4096)
+                if not chunk:
+                    return None
+                buf += chunk
+            if b" 101 " not in buf.split(b"\r\n", 1)[0]:
+                return None
+            buf = buf.partition(b"\r\n\r\n")[2]
+            # One unmasked text frame from the server: enough for the greeting.
+            while len(buf) < 2:
+                buf += c.recv(4096)
+            ln, off = buf[1] & 0x7F, 2
+            if ln == 126:
+                while len(buf) < 4:
+                    buf += c.recv(4096)
+                ln, off = struct.unpack(">H", buf[2:4])[0], 4
+            elif ln == 127:
+                while len(buf) < 10:
+                    buf += c.recv(4096)
+                ln, off = struct.unpack(">Q", buf[2:10])[0], 10
+            while len(buf) < off + ln:
+                buf += c.recv(65536)
+            return json.loads(buf[off:off + ln].decode("utf-8", "replace"))
+    except (OSError, ValueError):
+        return None
+
+
 def matter_relay():
     """Let the stick reach the Matter server on the host's loopback interface.
 
@@ -798,17 +849,49 @@ def matter_relay():
     dest = (host, int(port))
     host_ip = ENV["host_addr"].split("/")[0]
 
+    port = ENV["matter_port"]
     srv = None
+    said = False
     while srv is None:
         try:
             t = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             t.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            t.bind((host_ip, ENV["matter_port"]))
+            t.bind((host_ip, port))
             t.listen(4)
             srv = t
-        except OSError:
-            time.sleep(2.0)      # tap not up yet
-    log(f"BLE proxy forwarder: {host_ip}:{ENV['matter_port']} -> {dest[0]}:{dest[1]}")
+        except OSError as e:
+            if e.errno != errno.EADDRINUSE:
+                time.sleep(2.0)          # tap not up yet; it appears within seconds
+                continue
+            # Somebody is already on the address the stick dials.  That is not
+            # necessarily wrong: a Matter server run as an ordinary container
+            # usually listens on every interface, which covers this one, and
+            # then the stick reaches it without help.  Which of the two it is
+            # decides whether anything is broken, so look rather than guess.
+            if not said:
+                said = True
+                greeting = matter_greeting(host_ip, port)
+                if greeting is None:
+                    log(f"NOT forwarding: something already listens on "
+                        f"{host_ip}:{port} and it does not answer as a Matter "
+                        f"server.")
+                    log("    That is the address the stick dials, so it reaches "
+                        "that instead and reports no Matter server. Move the "
+                        "other service, or set THBR_MATTER_PORT.")
+                elif greeting.get("ble_proxy_enabled"):
+                    log(f"a Matter server answers on {host_ip}:{port} "
+                        f"({greeting.get('sdk_version', 'unknown build')}) and "
+                        f"takes a proxy radio — the stick reaches it directly, "
+                        f"no forwarding needed")
+                else:
+                    log(f"a Matter server answers on {host_ip}:{port} "
+                        f"({greeting.get('sdk_version', 'unknown build')}), but "
+                        f"it reports no BLE proxy.")
+                    log("    The stick will offer its radio and be turned away. "
+                        "Commissioning over Bluetooth needs a server that "
+                        "accepts a proxy radio, with that option switched on.")
+            time.sleep(30.0)             # it may go away; say it only once
+    log(f"BLE proxy forwarder: {host_ip}:{port} -> {dest[0]}:{dest[1]}")
 
     def pump(src, dst, who, state):
         err = None

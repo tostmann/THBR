@@ -4,6 +4,30 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.24
+
+Firmware unchanged at 0.1.38.
+
+- **The forwarder now says what it found.** It binds the host end of the
+  backbone so the stick can reach a Matter server on loopback — but a server
+  run as an ordinary container usually listens on every interface and already
+  covers that address. Then binding fails, and the previous version retried
+  in silence for as long as it ran: the stick reported no Matter server every
+  minute and nothing on this side said why. It now asks whatever holds the
+  port who it is, and says one of three things — the server is already
+  reachable and no forwarding is needed, a Matter server answers but reports
+  no BLE proxy so commissioning over the stick cannot work with it, or
+  something else entirely is on the address the stick dials.
+- Matter without Home Assistant is documented: which server accepts a proxy
+  radio (`ghcr.io/matter-js/matterjs-server` with `--ble-proxy`) and which does
+  not, where it has to listen, and that pairing happens in that server's own
+  web page. `compose.yaml` carries it as a service.
+- A FHEM module ships in `fhem/`. It turns the Matter server's devices into
+  readings and `set` commands and can pair a device from FHEMWEB. Tested
+  against one server and one lamp — a starting point, not a finished driver.
+- Log lines are written whole. Two threads logging at once ran into each other
+  now that the forwarder has one of its own.
+
 ## 2026.8.23
 
 Firmware 0.1.38.
