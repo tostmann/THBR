@@ -16,15 +16,76 @@ IKEA device  ──802.15.4──  THBR stick  ──USB──  host  ──  Ma
                               └── Bluetooth LE, for the first conversation
 ```
 
-- A **Thread border router**. THBR runs one on an ESP32-C6 or C5 and reaches
-  the host over the stick's own USB port. See the project README for setting it
-  up; everything below assumes it is running and the host has a route into the
-  mesh.
+- A **Thread border router** — an ESP32-C6 stick running THBR, reached over the
+  chip's own USB port. Step 1 sets it up and says what else works.
 - A **Matter server**. Matter itself — commissioning, certificates, PASE and
   CASE — happens there, not in FHEM.
 - **FHEM**, with `autocreate` defined.
 
-## 1. The Matter server
+## 1. The border router
+
+**The hardware:** an **ESP32-C6** with 4 MB flash, connected by its **native
+USB port** — the chip's own, not a UART bridge on the same board. It shows up
+as an *Espressif USB JTAG/serial debug unit*. That is the combination this was
+built and measured on.
+
+An **ESP32-C5** runs the same firmware and the container carries a build for
+both, picking the one that matches the chip it finds. It has about half the
+memory to spare, and on the C5s tested here the native USB port occasionally
+stopped answering until the chip was reset — see `addon/DOCS.md` before
+choosing one. The **ESP32-H2** cannot run this at all: Espressif ships no
+border-router library for it.
+
+The stick carries the whole border router; the host only needs the container
+that turns its USB port into a network interface.
+
+Plug the stick in and find its port. The name carries the chip's MAC, which is
+how you tell it from every other serial device on the machine:
+
+```
+ls -l /dev/serial/by-id/
+```
+
+Plugging the stick in **last** makes this unambiguous — it is the newest entry.
+Then:
+
+```
+docker run -d --name thbr --network host --restart unless-stopped \
+  --cap-add NET_ADMIN --cap-add NET_RAW \
+  --device-cgroup-rule "c 166:* rmw" --device-cgroup-rule "c 10:200 rmw" \
+  -v /dev:/dev -v /proc/sys/net/ipv6/conf:/hostsys -v thbr-data:/data \
+  -e THBR_DEVICE=/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00 \
+  tostmann/thbr:latest
+```
+
+- `--device-cgroup-rule` twice: without them the container sees the port and is
+  not allowed to open it, which looks exactly like a broken stick.
+- `-v /proc/sys/net/ipv6/conf:/hostsys` lets it set the two sysctls the host
+  needs to learn the route into the mesh. Without it the container says so and
+  installs the route by hand instead.
+- `-v thbr-data:/data` holds the backups of the stick's network settings.
+- `--network host` because the tap has to live in the host's namespace.
+
+A stick with no THBR firmware on it gets flashed on first start; one that
+already runs it is left alone. `docker logs thbr` says which, and the whole
+thing is also a Home Assistant add-on — see the project README.
+
+When it is up:
+
+```
+$ curl -s http://192.168.45.2:8082/status
+{"fw":"0.1.38","uptime_s":1930,"heap":196348,"link":"up","br":"running","role":"leader"}
+$ ip -6 route | grep tap0
+fd8b:f497:3b84:1::/64 via fe80::… dev tap0
+```
+
+`br: running` and a route through `tap0` are what the rest of this depends on.
+The stick also serves a page on port 8099 with the same information, the mesh
+topology, and buttons to update its firmware or save its network settings — it
+is open to the whole host by default, so put it behind something or set
+`THBR_WEB_ALLOW` to a network you trust.
+
+## 2. The Matter server
 
 Take `ghcr.io/matter-js/matterjs-server`. It accepts a proxy radio, which is
 what lets the stick do the Bluetooth part of pairing:
@@ -51,7 +112,7 @@ turned away. It works for everything else.
 If FHEM runs in a container of its own, the server has to listen on an address
 that container can reach; `--listen-address` takes one and can be repeated.
 
-## 2. Give the server the Thread network
+## 3. Give the server the Thread network
 
 **The step that is easy to miss.** A commissioning runs through certificates
 and fabric, and then fails at the last moment with
@@ -80,7 +141,7 @@ and give it to the server — from FHEM, once the device below is defined:
 way across restarts. Under Home Assistant this happens by itself; on a plain
 host it does not.
 
-## 3. FHEM
+## 4. FHEM
 
 Copy both modules in and tell FHEM about them:
 
@@ -105,7 +166,7 @@ attr MatterWS webCmdLabel Pairing code
 `nodes` say what it found. If it stays `disconnected`, nothing is listening at
 that address.
 
-## 4. Pair a device
+## 5. Pair a device
 
 Put the device into pairing mode the way its manual says — factory-new IKEA
 devices are already in it — and give FHEM the code from the box:
@@ -121,7 +182,7 @@ the device joins the Thread mesh and the rest happens over that.
 The Matter server's own web page on the same port does the same thing if you
 prefer clicking, and shows the same fabric.
 
-## 5. What appears
+## 6. What appears
 
 Nothing below was defined by hand. `autocreate` made both devices from the
 first message each node sent.
@@ -158,7 +219,7 @@ Readings are `ep<endpoint>_<what>` for the clusters the module knows — `onoff`
 `<endpoint>_<cluster>_<attribute>` for everything else. Nothing is dropped;
 extending the first list is a two-line change in `73_MatterWS.pm`.
 
-## 6. Switching the lamp
+## 7. Switching the lamp
 
 ```
 set Matter_18 on
@@ -178,7 +239,7 @@ attr Matter_18 room Matter
 A device whose switch is not on endpoint 1 — none seen so far — takes
 `attr <name> endpoint <n>`.
 
-## 7. The button switching the lamp
+## 8. The button switching the lamp
 
 A press is a moment, not a state: `CurrentPosition` is back to zero before
 anything could act on it. So presses arrive as Matter events, and the module

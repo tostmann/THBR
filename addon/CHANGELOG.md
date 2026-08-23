@@ -4,6 +4,16 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.28
+
+Firmware unchanged at 0.1.38.
+
+- The FHEM walkthrough began in the middle: it assumed a border router was
+  already running and sent the reader elsewhere for it. Setting up the stick is
+  now its first step, with the container that does it, the two device rules
+  without which the port is visible but cannot be opened, and what a working
+  one answers.
+
 ## 2026.8.27
 
 Firmware unchanged at 0.1.38.
