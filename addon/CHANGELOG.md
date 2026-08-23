@@ -4,6 +4,26 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.26
+
+Firmware unchanged at 0.1.38.
+
+- **A paired lamp is now a lamp in FHEM.** The module used to write everything
+  a node reported as readings on the one server device — complete, and useless
+  as an interface. There are now two levels, the way FHEM expects: `MatterWS`
+  holds the connection to the Matter server, and the new `74_MatterDevice.pm`
+  turns each node into its own device with `on`/`off`/`toggle`/`pct`, its own
+  readings and a `state`. Devices appear through `autocreate` on a node's first
+  message, and take the product the device reports as their alias.
+- **A button can drive a lamp.** Presses arrive as Matter events, not as
+  attribute changes — `CurrentPosition` is back to zero before anything could
+  act on it — and one press produces three of them. Only the finished gesture
+  is passed on, as `ep<n>_press` with `single`, `multi2`, `long`, so a `notify`
+  fires once. Measured on an IKEA button and an IKEA lamp.
+- `fhem/README.md` walks through all of it with those two devices as they
+  actually appear, and says what still does not work: colour is read but not
+  written, and a node that stops answering looks like one that answers.
+
 ## 2026.8.25
 
 Firmware unchanged at 0.1.38.

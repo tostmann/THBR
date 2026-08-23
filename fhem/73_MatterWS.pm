@@ -48,7 +48,14 @@ sub MatterWS_Initialize {
     $hash->{SetFn}      = \&MatterWS_Set;
     $hash->{ReadFn}     = \&MatterWS_Read;
     $hash->{ReadyFn}    = \&MatterWS_Ready;
+    $hash->{WriteFn}    = \&MatterWS_Write;
     $hash->{AttrList}   = $readingFnAttributes;
+
+    # A paired lamp should turn up as a lamp, not as thirty readings on the
+    # server device.  Everything a node reports is handed to Dispatch, which
+    # gives it to MatterDevice — and lets autocreate make the device.
+    $hash->{Clients}   = ":MatterDevice:";
+    $hash->{MatchList} = { "1:MatterDevice" => "^MatterDevice:" };
     return;
 }
 
@@ -162,6 +169,14 @@ sub MatterWS_Dispatch {
         return;
     }
 
+    # A Matter event.  Buttons report this way and not as attributes: a press
+    # is a moment, not a state, and CurrentPosition is back to 0 before anyone
+    # can act on it.
+    if (($msg->{event} // "") eq "node_event") {
+        MatterWS_NodeEvent($hash, $msg->{data} // {});
+        return;
+    }
+
     # A change on a device: [node_id, "endpoint/cluster/attribute", value].
     if (($msg->{event} // "") eq "attribute_updated") {
         my ($node, $path, $value) = @{ $msg->{data} };
@@ -189,6 +204,41 @@ sub MatterWS_Dispatch {
     return;
 }
 
+# Switch cluster events, the ones a button is for.  A single press produces
+# three of them — InitialPress, ShortRelease, MultiPressComplete — so acting on
+# every one would fire three times.  Only the two that mean a finished gesture
+# are passed on: a long press, and a completed press with its count.
+my %PRESS = (
+    2 => "long",       # LongPress
+    6 => "multi",      # MultiPressComplete; the count says how many
+);
+
+sub MatterWS_NodeEvent {
+    my ($hash, $d) = @_;
+    my $node = $d->{node_id};
+    my $ep   = $d->{endpoint_id};
+    return if (!defined $node || !defined $ep);
+
+    if (($d->{cluster_id} // 0) == 59) {
+        my $kind = $PRESS{ $d->{event_id} // -1 };
+        return if (!$kind);
+        my $value = $kind;
+        if ($kind eq "multi") {
+            my $n = $d->{data}{totalNumberOfPressesCounted} // 1;
+            $value = ($n == 1) ? "single" : "multi$n";
+        }
+        Dispatch($hash, "MatterDevice:" . encode_json([$node, "ep${ep}_press", $value]), undef);
+        return;
+    }
+
+    # Anything else is kept as it comes, so a device this module has never seen
+    # is still visible rather than silently dropped.
+    my $reading = "ep${ep}_event_$d->{cluster_id}_$d->{event_id}";
+    my $value   = ref $d->{data} ? encode_json($d->{data}) : ($d->{data} // "");
+    Dispatch($hash, "MatterDevice:" . encode_json([$node, $reading, $value]), undef);
+    return;
+}
+
 sub MatterWS_Attribute {
     my ($hash, $node, $path, $value) = @_;
     my ($ep, $cluster, $attr) = split m{/}, $path;
@@ -201,9 +251,17 @@ sub MatterWS_Attribute {
     $value = encode_json($value) if (ref $value);
 
     my $known = $KNOWN{"$cluster/$attr"};
-    my $reading = $known ? "node${node}_ep${ep}_$known"
-                         : "node${node}_${ep}_${cluster}_${attr}";
-    readingsSingleUpdate($hash, $reading, $value, 1);
+    my $reading = $known ? "ep${ep}_$known" : "${ep}_${cluster}_${attr}";
+
+    # To the node's own device.  Dispatch creates it on first sight when
+    # autocreate is on, which is what makes a paired lamp a lamp.
+    Dispatch($hash, "MatterDevice:" . encode_json([$node, $reading, $value]), undef);
+    return;
+}
+
+sub MatterWS_Write {
+    my ($hash, $msg) = @_;    # a ready-made command from a node's device
+    MatterWS_Send($hash, $msg);
     return;
 }
 
