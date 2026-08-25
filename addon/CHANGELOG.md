@@ -4,6 +4,35 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.31
+
+Firmware unchanged at 0.1.40.
+
+- **The add-on no longer takes port 5580 away from a Matter server.** The stick
+  dials a fixed address on the backbone to offer its Bluetooth radio, and the
+  add-on listens there to carry that through. A Matter server run as an
+  ordinary container listens on *every* interface, which is the same port, and
+  two listeners cannot share it. Until now the add-on kept retrying that bind
+  every 30 seconds — so it took the port the moment such a server restarted,
+  and from then on that server failed to start with `errno 98`, for good. It
+  now waits for the Matter server to answer before taking the port at all, and
+  where the server already holds it, stands aside permanently and says so.
+  Found on a live installation, where it stopped the Matter server from coming
+  back up after a restart.
+- A `THBR_MATTER_ADDR` pointing at the forwarder's own address is refused
+  instead of forwarding to itself.
+- **New option `stick_log`: `quiet` (new default), `all`, `off`.** The border
+  router's own web and diagnostics logging is about fifty lines a minute,
+  steady, and all of it routine — enough to push the add-on's own lines out of
+  a rotated container log within minutes. `quiet` drops that running
+  commentary and keeps everything else, warnings and errors included. `all` is
+  the previous behaviour.
+- Documented what start order means under plain Docker: Home Assistant
+  enumerates its network adapters once, at startup, so it must not come up
+  before the tap exists. The compose file already says so with
+  `depends_on: condition: service_healthy`; started by hand, it is on you. As
+  an add-on this cannot happen, `startup: services` covers it.
+
 ## 2026.8.30
 
 Firmware unchanged at 0.1.40.

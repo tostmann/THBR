@@ -31,6 +31,9 @@ Environment:
   THBR_MATTER_ADDR   Matter server the stick's BLE proxy dials, host:port,
                      empty to switch the forwarder off        (127.0.0.1:5580)
   THBR_MATTER_PORT   port the forwarder offers on the tap                (5580)
+  THBR_STICK_LOG     how much of the stick's own log to repeat  (quiet|all|off)
+                     quiet: drop the border router's routine web/diagnostics
+                     chatter, which is most of it, and keep everything else
   THBR_WEB_ALLOW     who may reach the web interface: 'ingress' (Home
                      Assistant only), 'any', or a comma-separated list of
                      addresses/CIDRs.  Defaults to 'ingress' under the
@@ -91,6 +94,7 @@ ENV = {
     "release": os.environ.get("THBR_VERSION", ""),
     "matter_addr": os.environ.get("THBR_MATTER_ADDR", "127.0.0.1:5580"),
     "matter_port": int(os.environ.get("THBR_MATTER_PORT", "5580")),
+    "stick_log": os.environ.get("THBR_STICK_LOG", "quiet").lower(),
 }
 
 # Home Assistant add-on: the Supervisor writes the user's settings here.  They
@@ -99,6 +103,10 @@ ENV = {
 # hand.  A router advertisement answering our solicitation arrives in well under
 # a second; this is generous on purpose.
 ROUTE_GRACE_S = 25.0
+
+# How often the forwarder looks for the Matter server it is meant to reach,
+# both before it takes a port and when a bind is contested.
+FORWARDER_PROBE_S = 15.0
 
 WEB_PORT = int(os.environ.get("THBR_WEB_PORT", "8099"))
 
@@ -109,7 +117,8 @@ if os.path.exists(OPTIONS_FILE):
             _opts = json.load(_fh)
         for _key, _env in (("device", "device"), ("flash", "policy"), ("tap", "tap"),
                            ("host_addr", "host_addr"), ("stick_addr", "stick"),
-                           ("web_allow", "web_allow")):
+                           ("web_allow", "web_allow"),
+                           ("stick_log", "stick_log")):
             if _opts.get(_key) not in (None, ""):
                 ENV[_env] = str(_opts[_key])
         ENV["policy"] = ENV["policy"].lower()
@@ -850,8 +859,30 @@ def matter_relay():
     host_ip = ENV["host_addr"].split("/")[0]
 
     port = ENV["matter_port"]
+    if dest == (host_ip, port):
+        log(f"THBR_MATTER_ADDR points at this forwarder's own address "
+            f"{host_ip}:{port} — that would be a loop; forwarder off")
+        return
+
+    # The tap address and a Matter server's wildcard bind are the same port, so
+    # whichever of the two starts first locks the other out — SO_REUSEADDR does
+    # not share a listening port.  So do not take the port on spec: wait until
+    # the server this would forward TO actually answers.  Then either it is on
+    # loopback only and the tap address is free for us, or it holds every
+    # interface — in which case the bind below fails, and it should, because
+    # the stick can reach that server without any help from here.  Taking the
+    # port first and sorting it out afterwards is what breaks a Matter server
+    # that restarts later: its wildcard bind then fails for good (errno 98).
+    said_waiting = False
+    while matter_greeting(dest[0], dest[1]) is None:
+        if not said_waiting:
+            said_waiting = True
+            log(f"waiting for a Matter server on {dest[0]}:{dest[1]} before "
+                f"offering the stick a way to it — nothing to forward until then")
+        time.sleep(FORWARDER_PROBE_S)
+
     srv = None
-    said = False
+    waited = 0.0
     while srv is None:
         try:
             t = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -868,17 +899,9 @@ def matter_relay():
             # usually listens on every interface, which covers this one, and
             # then the stick reaches it without help.  Which of the two it is
             # decides whether anything is broken, so look rather than guess.
-            if not said:
-                said = True
-                greeting = matter_greeting(host_ip, port)
-                if greeting is None:
-                    log(f"NOT forwarding: something already listens on "
-                        f"{host_ip}:{port} and it does not answer as a Matter "
-                        f"server.")
-                    log("    That is the address the stick dials, so it reaches "
-                        "that instead and reports no Matter server. Move the "
-                        "other service, or set THBR_MATTER_PORT.")
-                elif greeting.get("ble_proxy_enabled"):
+            greeting = matter_greeting(host_ip, port)
+            if greeting is not None:
+                if greeting.get("ble_proxy_enabled"):
                     log(f"a Matter server answers on {host_ip}:{port} "
                         f"({greeting.get('sdk_version', 'unknown build')}) and "
                         f"takes a proxy radio — the stick reaches it directly, "
@@ -890,7 +913,26 @@ def matter_relay():
                     log("    The stick will offer its radio and be turned away. "
                         "Commissioning over Bluetooth needs a server that "
                         "accepts a proxy radio, with that option switched on.")
-            time.sleep(30.0)             # it may go away; say it only once
+                # Stand down, and stay down.  Retrying this bind would take the
+                # port the moment that server restarts, and its wildcard bind
+                # would then fail for good with errno 98 — a border router
+                # holding a Matter server down, which is the wrong way round.
+                log(f"    Leaving {host_ip}:{port} to it and not retrying, so it "
+                    "still has the port after a restart.")
+                return
+            # Not a Matter server.  Most likely a process on its way out, so
+            # wait a little rather than claim the port from under it — but not
+            # forever, and never by surprise.
+            if waited >= 50.0:
+                log(f"NOT forwarding: something already listens on "
+                    f"{host_ip}:{port} and it does not answer as a Matter "
+                    f"server.")
+                log("    That is the address the stick dials, so it reaches "
+                    "that instead and reports no Matter server. Move the "
+                    "other service, or set THBR_MATTER_PORT.")
+                return
+            time.sleep(10.0)
+            waited += 10.0
     log(f"BLE proxy forwarder: {host_ip}:{port} -> {dest[0]}:{dest[1]}")
 
     def pump(src, dst, who, state):
@@ -948,8 +990,36 @@ def matter_relay():
                              daemon=True).start()
 
 
+# Tags the border router's own web server logs under while it collects
+# diagnostics.  Measured on a live installation: about fifty lines a minute,
+# steady, all of it routine -- enough to push this add-on's own lines out of a
+# rotated `docker logs` within minutes.  Warnings and errors from these tags
+# are still kept; only the running commentary goes.
+STICK_QUIET_TAGS = ("web_base", "obtr_web")
+STICK_LINE = re.compile(r"^([VDIWE]) \(\d+\) ([A-Za-z0-9_.\-]+):")
+
+
+def stick_line_wanted(line, mode):
+    """Whether a line from the stick is worth repeating on our stdout."""
+    if mode == "off":
+        return False
+    if mode != "quiet":
+        return True
+    m = STICK_LINE.match(line.strip())
+    return not (m and m.group(1) in "VDI" and m.group(2) in STICK_QUIET_TAGS)
+
+
 def log_relay():
-    """Print the stick's UDP log lines on our stdout, so `docker logs` has them."""
+    """Print the stick's UDP log lines on our stdout, so `docker logs` has them.
+
+    Filtered by THBR_STICK_LOG.  The full stream is always on the stick's own
+    console; what this decides is only how much of it lands in the container
+    log, where it competes with the lines this add-on writes about itself.
+    """
+    mode = ENV["stick_log"]
+    if mode not in ("quiet", "all", "off"):
+        log(f"THBR_STICK_LOG={mode} is not quiet, all or off — using quiet")
+        mode = "quiet"
     host_ip = ENV["host_addr"].split("/")[0]
     sock = None
     while sock is None:
@@ -968,7 +1038,7 @@ def log_relay():
         try:
             data, _ = sock.recvfrom(2048)
         except socket.timeout:
-            if tail.strip():
+            if tail.strip() and stick_line_wanted(tail, mode):
                 print("[stick]", tail.rstrip(), flush=True)
             tail = ""
             continue
@@ -976,7 +1046,7 @@ def log_relay():
         lines = text.split("\n")
         tail = lines.pop()
         for line in lines:
-            if line.strip():
+            if line.strip() and stick_line_wanted(line, mode):
                 print("[stick]", line.rstrip(), flush=True)
 
 

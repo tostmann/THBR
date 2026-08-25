@@ -107,6 +107,7 @@ flash: auto
 | `tap` | Name of the network interface the add-on creates. Default `tap0`. |
 | `web_allow` | Who may reach the add-on's page. Unset means Home Assistant only, which is what you want. `any` opens it to everything this machine is reachable on; a comma-separated list of addresses or networks opens it to those. |
 | `host_addr` / `stick_addr` | The private point-to-point addresses of the backbone, `192.168.45.1/24` and `192.168.45.2`. Change them only if that subnet collides with something on your network. |
+| `stick_log` | How much of the stick's own log is repeated in this add-on's log. `quiet` (default) drops the border router's routine web and diagnostics chatter, which is the bulk of it and can otherwise push this add-on's own lines out of a rotated log within minutes. `all` repeats everything, `off` nothing. Warnings and errors are kept in every mode except `off`. |
 
 A flash costs about a minute of border routing. The Thread network itself
 survives it — it lives in the stick's flash, and no device has to be
@@ -282,6 +283,33 @@ plugged in.
 **The add-on is running but no border router is discovered** — step 2 above:
 `tap0` is not among Home Assistant's network adapters, or Home Assistant
 started before the interface existed.
+
+**Under plain Docker: Home Assistant must not start before this container.**
+Home Assistant enumerates network adapters once, at startup, and binds its mDNS
+sockets per interface. Docker starts containers in no particular order, so
+Home Assistant can come up before the tap exists — and then it has no adapter
+on the backbone, Thread discovery never sees the router, and nothing anywhere
+looks like an error. The compose file next to this document expresses the
+order with `depends_on: thbr: condition: service_healthy`. If you start the
+containers by hand instead, either start this one first, or check after a
+reboot whether Home Assistant really has the interface and restart it if not:
+
+```
+docker exec homeassistant python3 -c "import ifaddr; print([a.nice_name for a in ifaddr.get_adapters()])"
+```
+
+As an add-on under the Supervisor this cannot happen: `startup: services` puts
+the add-on before Home Assistant.
+
+**A Matter server on the same machine will not start, `errno 98` on port
+5580** — the stick dials a fixed address on the backbone to offer its
+Bluetooth radio, and this add-on listens there to carry that through to the
+Matter server. A Matter server that binds *every* interface wants the same
+port, and the two cannot share it. The add-on therefore waits for the Matter
+server to answer before taking the port at all, and stands aside for good once
+one does — so this should not happen. If it still does, switch the forwarder
+off with `THBR_MATTER_ADDR=` (empty): a host with its own Bluetooth adapter
+does not need the stick's radio, and only the radio needs forwarding.
 
 **`br=stopped` in the log for several minutes** — the firmware detects and
 repairs the most common cause itself. If it persists, open an issue and
