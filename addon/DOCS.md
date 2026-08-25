@@ -154,6 +154,15 @@ on the address the stick dials and says which of the two it found, so this
 shows up as a sentence in the log rather than as a commissioning that fails for
 no visible reason.
 
+**Range cuts both ways.** Too close is a known problem, but too far is the one
+that actually happens: measured across twenty devices on one installation,
+commissioning succeeded from -43 to -80 dBm and failed at -95 dBm, where it
+timed out during the Bluetooth connection (`Secure Pairing Failed`) without the
+device ever reaching Thread. **Below roughly -90 dBm, bring the device near the
+machine, commission it there, and install it afterwards** — a device that failed
+this way keeps its commissioning window, so a retry costs nothing; one that
+failed *after* joining Thread needs another factory reset.
+
 Two details that matter if something looks wrong:
 
 - The Matter server publishes its port on the loopback interface only, and the
@@ -238,7 +247,12 @@ is only rebuilt when the network itself changes.
 **Save network settings** reads the stick's NVS partition — the Thread network
 it rejoins with and the prefix it advertises. That is the only part of the
 flash worth keeping: everything else is firmware this add-on already carries.
-The backbone pauses for a second or two while it is read.
+**This restarts the stick.** Reading NVS needs esptool, which resets the chip
+to get into the bootloader and resets it again afterwards, so the border router
+reboots and the mesh is without one for about a minute. Measured on a live
+installation on 2026-08-25: the stick came back on its own and every device
+rejoined, but this is not something to do casually in the evening while the
+lights are in use.
 
 The file lands in the add-on's own data directory, which means **Home Assistant
 backups contain it** — verified: a partial backup of this add-on holds
@@ -261,6 +275,33 @@ sticks carrying the same saved settings must never be on the air at once.
 A whole-flash backup is not offered, and would not work: reading 4 MB over the
 stick's USB-Serial/JTAG port aborts, while this 24 KB partition reads in a
 fraction of a second (both measured).
+
+## How many devices a border router can carry
+
+Every Matter device in the mesh registers a service with the border router
+through SRP, and the router republishes each one over mDNS on the backbone so
+the Matter server can find it. Its own MeshCoP service sits in the same table.
+That table has a fixed size (`CONFIG_MDNS_MAX_SERVICES`, **48** since firmware
+0.1.41; the ESP-IDF default of 10 was a ceiling nobody had chosen on purpose).
+
+Measured on an installation with 20 Matter devices: **37 of the 48 slots**, so
+roughly 1.75 per device — call it a ceiling around 26 devices, and rather fewer
+if devices open commissioning windows, which publishes a second service each
+for as long as the window is open.
+
+**When the table is full, commissioning fails in a way that points somewhere
+else.** The device joins Thread perfectly well, its SRP registration is refused,
+the SRP server answers SERVFAIL, and the controller then cannot find it over
+DNS-SD — so the error reads `Timeout waiting for mDNS resolution` and looks
+like a radio or range problem. The border router says what really happened, in
+its own log: `Cannot add more services, please increase
+CONFIG_MDNS_MAX_SERVICES`. With `stick_log: quiet` that line is kept; it is an
+error, and only the routine chatter is dropped.
+
+**A factory reset does not free a slot.** Resetting a device sends no SRP
+deregistration: its entry lives until the lease expires, and a device that
+still has power keeps renewing it. So the entries of a fabric you have
+abandoned occupy slots for as long as the hardware is switched on.
 
 ## What the add-on does to your host network
 

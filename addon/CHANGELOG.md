@@ -4,6 +4,40 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.34
+
+**Firmware 0.1.42** — the Bluetooth proxy dials the documented address again.
+
+- **Fixes a regression shipped in 2026.8.33.** The firmware's BLE proxy
+  endpoint had reverted to a bench address (`…:5590`) while the add-on's
+  forwarder offers `…:5580`, so a stick asked to lend its radio dialled a port
+  nobody serves — and said so only in a warning line every sixty seconds. The
+  value had been corrected in the source two days earlier; a *generated*
+  sdkconfig that had gone stale reintroduced it, because ESP-IDF does not
+  re-read its defaults once a generated config exists.
+- **The build now notices that.** `scripts/build.sh` checked only the plain
+  generated config against its defaults; it checks every variant now, so a
+  stale `sdkconfig.ble` or `sdkconfig.c5` regenerates instead of being reused.
+- **And a release cannot claim a fix the binary does not have.**
+  `scripts/dist.sh` refuses to bundle firmware whose configuration disagrees
+  with what the repository says it should be — the reference is the tree
+  (overlay, else the Kconfig default), not the build's own copy of it, because
+  a stale build is perfectly self-consistent and would pass any check made
+  against itself.
+- The forwarder now reports a Matter server that takes no proxy radio on the
+  ordinary path too, not only when the port is contested. Bridging to such a
+  server works at the socket level and fails at the first commissioning, which
+  is a long way from the cause.
+- Documentation, all of it measured on a live installation rather than
+  reasoned: **saving the stick's settings restarts it** (esptool resets the
+  chip; the mesh is without a border router for about a minute — the previous
+  "pauses for a second or two" was wrong); **commissioning range**, which
+  succeeded from -43 to -80 dBm and failed at -95 dBm; and a new section on
+  **how many devices a border router can carry** — 48 mDNS slots, about 1.75
+  per device, a ceiling near 26, why a full table makes commissioning fail
+  with an error that points at DNS instead, and that a factory reset frees no
+  slot until the SRP lease expires.
+
 ## 2026.8.33
 
 **Firmware 0.1.41** — the border router can carry more than nine Matter devices.

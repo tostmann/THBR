@@ -874,12 +874,14 @@ def matter_relay():
     # port first and sorting it out afterwards is what breaks a Matter server
     # that restarts later: its wildcard bind then fails for good (errno 98).
     said_waiting = False
-    while matter_greeting(dest[0], dest[1]) is None:
+    greeting = matter_greeting(dest[0], dest[1])
+    while greeting is None:
         if not said_waiting:
             said_waiting = True
             log(f"waiting for a Matter server on {dest[0]}:{dest[1]} before "
                 f"offering the stick a way to it — nothing to forward until then")
         time.sleep(FORWARDER_PROBE_S)
+        greeting = matter_greeting(dest[0], dest[1])
 
     srv = None
     waited = 0.0
@@ -934,6 +936,15 @@ def matter_relay():
             time.sleep(10.0)
             waited += 10.0
     log(f"BLE proxy forwarder: {host_ip}:{port} -> {dest[0]}:{dest[1]}")
+    # Say it here too, not only in the contested-bind branch.  Forwarding to a
+    # server that does not take a proxy radio works perfectly at the socket
+    # level and fails at the first commissioning, which is a long way from the
+    # cause -- and this is the ordinary case, a server published on loopback.
+    if not greeting.get("ble_proxy_enabled"):
+        log(f"    but that server ({greeting.get('sdk_version', 'unknown build')}) "
+            f"reports no BLE proxy: it will turn the stick's radio away. "
+            f"Commissioning over Bluetooth needs one that accepts a proxy radio, "
+            f"with that option switched on.")
 
     def pump(src, dst, who, state):
         err = None

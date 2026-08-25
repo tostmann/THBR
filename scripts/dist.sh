@@ -58,6 +58,71 @@ def atomic_copy(src, dst):
         print(f"  read-back mismatch on {dst}, retry {attempt + 1}", file=sys.stderr)
     sys.exit(f"could not write {dst} intact after 3 attempts")
 
+# Check the artefact against what the REPOSITORY says it should be, before
+# anything is published.
+#
+# Checking the binary against the build's own config is not enough and would
+# have missed the mistake this exists for: on 2026-08-25 a generated
+# sdkconfig.ble had gone stale, the build was perfectly self-consistent, and it
+# shipped a value a commit two days earlier had already corrected.  So the
+# reference is the intent in the tree -- an explicit setting in any
+# sdkconfig.defaults* overlay, else the Kconfig default -- and it is compared
+# against both the effective config AND the bytes of the image.
+def repo_intent(key):
+    """What this tree says the value should be: overlay wins, else Kconfig."""
+    for name in sorted(os.listdir(root)):
+        if not name.startswith("sdkconfig.defaults"):
+            continue
+        m = re.search(r'^CONFIG_%s="([^"]*)"' % re.escape(key),
+                      open(os.path.join(root, name)).read(), re.M)
+        if m:
+            return m.group(1), name
+    kc = os.path.join(root, "main/Kconfig.projbuild")
+    if os.path.exists(kc):
+        m = re.search(r'config\s+%s\b.*?^\s*default\s+"([^"]*)"' % re.escape(key),
+                      open(kc).read(), re.M | re.S)
+        if m:
+            return m.group(1), "Kconfig default"
+    return None, None
+
+def effective(key):
+    j = os.path.join(build, "config/sdkconfig.json")
+    if os.path.exists(j):
+        import json as _json
+        return _json.load(open(j)).get(key)
+    m = re.search(r'^CONFIG_%s=(.*)$' % re.escape(key), cfg, re.M)
+    if not m:
+        return None
+    v = m.group(1).strip()
+    return v.strip('"') if v.startswith('"') else (True if v == "y" else v)
+
+app = None
+for off, rel in images:
+    if os.path.basename(rel).startswith("thbr"):
+        app = os.path.join(build, rel)
+
+# Only string values survive into the image recognisably -- but that is exactly
+# the class of setting that points somewhere, and so the class that hurts when
+# it points at the wrong place.
+STRING_CHECKS = [("THBR_BLE_PROXY_URI", "BT_ENABLED")]
+for key, gate in STRING_CHECKS:
+    if gate and not effective(gate):
+        continue
+    want, whence = repo_intent(key)
+    have = effective(key)
+    if want is None:
+        print(f"  note: no repository intent found for {key}, not checked")
+        continue
+    if have != want:
+        sys.exit(f"{key} is {have!r} in this build, but the tree says {want!r} "
+                 f"({whence}).\n"
+                 f"  The generated sdkconfig this was built from is stale.\n"
+                 f"  Delete it and rebuild -- scripts/build.sh does that for you.")
+    if app and want.encode() not in open(app, "rb").read():
+        sys.exit(f"{os.path.basename(app)} does not contain {key}={want!r} -- "
+                 f"the image and its config disagree.")
+    print(f"  verified against the tree: {key}={want} ({whence})")
+
 manifest = {"product": "THBR", "fw": fw, "build": date, "chip": chip,
             "flash_args": flash_args, "images": []}
 for off, rel in images:
