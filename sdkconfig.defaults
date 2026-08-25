@@ -80,6 +80,17 @@ CONFIG_MDNS_MULTIPLE_INSTANCE=y
 CONFIG_MDNS_PREDEF_NETIF_STA=n
 CONFIG_MDNS_PREDEF_NETIF_AP=n
 CONFIG_MDNS_PREDEF_NETIF_ETH=n
+# Every Matter device in the mesh registers one service through SRP, and the
+# advertising proxy republishes each of them here -- plus the border router's
+# own MeshCoP service.  The IDF default of 10 is therefore not a generous
+# allowance, it is a ceiling on how many Matter devices this border router can
+# carry, and nothing says so until commissioning fails.  Measured on a live
+# installation 2026-08-25: with nine services already registered, the tenth
+# device joined Thread, its SRP registration was refused
+# ("Cannot add more services, please increase CONFIG_MDNS_MAX_SERVICES (10)"),
+# the SRP server answered SERVFAIL, and commissioning failed at operational
+# discovery -- a failure that points at mDNS and reads like a radio problem.
+CONFIG_MDNS_MAX_SERVICES=48
 
 # ----- Console: plain text during the grace window, then PPP takes over -----
 # Kept on USB-Serial/JTAG deliberately — log_sink detaches it at runtime

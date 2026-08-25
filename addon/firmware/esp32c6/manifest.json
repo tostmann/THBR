@@ -1,7 +1,7 @@
 {
   "product": "THBR",
-  "fw": "0.1.40",
-  "build": "2026-08-23 22:10:43",
+  "fw": "0.1.41",
+  "build": "2026-08-25 18:43:17",
   "chip": "esp32c6",
   "flash_args": "--flash-mode dio --flash-freq 80m --flash-size 4MB",
   "images": [
@@ -9,7 +9,7 @@
       "offset": "0x0",
       "file": "bootloader.bin",
       "size": 22528,
-      "sha256": "0686531a54fab9e4763d93cba21fd12bd901987ca248ca47e11ce365d9252055"
+      "sha256": "6a82cf47e682006d314a0ee8a3b33cb2d72d2286e30b7b8a4edb176196a1cc82"
     },
     {
       "offset": "0x8000",
@@ -27,7 +27,7 @@
       "offset": "0x10000",
       "file": "thbr.bin",
       "size": 1733968,
-      "sha256": "9cf8e9b84bc330faf031949296d68d16c82133f936389ea381261f6171e5031f"
+      "sha256": "f0eb228880a5c875797b25b6b1f6b8d564370ed9f5ec93ce114364c2f98fa408"
     }
   ]
 }

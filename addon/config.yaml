@@ -1,7 +1,7 @@
 # Home Assistant add-on manifest.  The same directory is also the build context
 # for the plain-Docker image (docker build -t thbr addon/).
 name: THBR Thread Border Router
-version: "2026.8.32"
+version: "2026.8.33"
 slug: thbr
 description: Thread border router on an ESP32-C6 stick, reached over its USB port — no Ethernet chip, no radio co-processor on this machine.
 url: https://github.com/tostmann/THBR

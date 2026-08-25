@@ -4,6 +4,30 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.33
+
+**Firmware 0.1.41** — the border router can carry more than nine Matter devices.
+
+- **`CONFIG_MDNS_MAX_SERVICES` raised from the IDF default of 10 to 48.** Every
+  Matter device in the mesh registers a service through SRP, and the
+  advertising proxy republishes each one through the firmware's mDNS
+  responder; the border router's own MeshCoP service sits in the same table.
+  Ten was therefore not an allowance but a ceiling on how many devices a border
+  router could carry — and nothing said so until commissioning failed. Measured
+  on a live installation: with the table full, a freshly reset lamp joined
+  Thread, its SRP registration was refused ("Cannot add more services, please
+  increase CONFIG_MDNS_MAX_SERVICES (10)"), the SRP server answered SERVFAIL,
+  and commissioning died at operational discovery — a failure that reads like a
+  radio or range problem and is neither.
+- The limit is a comparison threshold in the responder, not a static
+  allocation: the image is byte-for-byte the same size as 0.1.40, and memory is
+  only spent per service that actually exists (a few hundred bytes each).
+- Also worth knowing for anyone re-commissioning a fabric: a device that is
+  factory reset does not deregister its SRP entry. It lingers until the lease
+  runs out, and a device that still has power keeps renewing it — so stale
+  registrations from a dead fabric occupy slots for as long as the hardware is
+  switched on.
+
 ## 2026.8.32
 
 Firmware unchanged at 0.1.40.
