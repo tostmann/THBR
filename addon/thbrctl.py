@@ -990,12 +990,14 @@ def matter_relay():
                              daemon=True).start()
 
 
-# Tags the border router's own web server logs under while it collects
-# diagnostics.  Measured on a live installation: about fifty lines a minute,
-# steady, all of it routine -- enough to push this add-on's own lines out of a
-# rotated `docker logs` within minutes.  Warnings and errors from these tags
-# are still kept; only the running commentary goes.
-STICK_QUIET_TAGS = ("web_base", "obtr_web")
+# Tags the border router's own web server logs under while it serves its GUI
+# and collects mesh diagnostics.  Measured on a live installation: about fifty
+# lines a minute, steady, all of it routine -- enough to push this add-on's own
+# lines out of a rotated `docker logs` within minutes.  Warnings and errors
+# from these tags are still kept; only the running commentary goes.  The
+# routing and SRP lines OPENTHREAD logs are deliberately NOT in here: those say
+# which devices registered, which is worth having.
+STICK_QUIET_TAGS = ("web_base", "obtr_web", "web_api")
 STICK_LINE = re.compile(r"^([VDIWE]) \(\d+\) ([A-Za-z0-9_.\-]+):")
 
 

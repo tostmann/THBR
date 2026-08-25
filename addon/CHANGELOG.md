@@ -4,6 +4,17 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.32
+
+Firmware unchanged at 0.1.40.
+
+- `stick_log: quiet` now also drops the border router's `web_api` chatter — one
+  "diagnostic collection complete" line every sixteen seconds, and three more
+  around it. Measured after 2026.8.31 went out: that release took the stick's
+  share of the log from about fifty lines a minute down to thirteen, and
+  `web_api` was most of what was left. What stays are the OPENTHREAD lines,
+  which say which devices registered, and anything at warning level or above.
+
 ## 2026.8.31
 
 Firmware unchanged at 0.1.40.
