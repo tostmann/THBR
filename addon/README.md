@@ -129,7 +129,11 @@ path.
 Flashing stops the backbone for about a minute; border routing and the
 Thread network itself resume from the stick's flash — no device has to be
 re-commissioned. Only `esptool erase-flash` (never run by this container)
-destroys the Thread network.
+destroys the Thread network, and since firmware 0.1.44 that is final: an
+erased stick does not return to a known network, it generates a new random
+one, and every device paired on the old network stays behind. Save the
+network data first — from the add-on page, or `GET /node/dataset/active` —
+because that saved copy is the only way back.
 
 ## Flash policy (`THBR_FLASH`)
 

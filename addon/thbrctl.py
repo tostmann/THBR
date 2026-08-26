@@ -76,6 +76,8 @@ BACKUP_RES = os.path.join(RUN_DIR, "backup.result")
 RESTORE_REQ = os.path.join(RUN_DIR, "restore.request")
 RESTORE_RES = os.path.join(RUN_DIR, "restore.result")
 BACKUP_DIR = "/data/backups"
+# What network the stick was on the last time we looked.  See check_identity().
+IDENTITY_FILE = "/data/network-identity.json"
 RES_FILE = os.path.join(RUN_DIR, "flash.result")
 PID_FILE = os.path.join(RUN_DIR, "supervisor.pid")
 
@@ -1301,6 +1303,67 @@ def flash_cycle(pump, m, reason, force=False):
 
 # --------------------------------------------------------------------------- commands
 
+def check_identity():
+    """Notice when the stick comes up on a different Thread network than before.
+
+    Since firmware 0.1.44 a stick with no network in storage generates a random
+    one.  That is the right behaviour once, and a disaster repeated: OpenThread
+    reports success on storing the dataset even when the write did not stick --
+    the function that writes it, DatasetManager::SaveLocal(), has no way to
+    report failure -- so a stick whose settings storage is full or failing runs
+    perfectly until it reboots, and then comes up on a NEW random network with
+    every paired device left behind.  The firmware cannot see this; a note on
+    disk from the previous run can.
+
+    The same check catches the other quiet way to lose a network: an
+    `esptool erase-flash` that somebody meant as a firmware refresh.
+
+    Returns True once it has an answer to remember, so the caller can stop
+    asking every minute.
+    """
+    try:
+        node = http_json(f"http://{ENV['stick']}/node", timeout=5.0)
+    except (urllib.error.URLError, OSError, ValueError):
+        return False                    # border router not up yet
+    now = {"extpanid": node.get("ExtPanId"), "name": node.get("NetworkName")}
+    if not now["extpanid"]:
+        return False
+
+    seen = None
+    try:
+        with open(IDENTITY_FILE) as fh:
+            seen = json.load(fh)
+    except (OSError, ValueError):
+        pass
+
+    if seen and seen.get("extpanid") == now["extpanid"]:
+        return True
+
+    if seen:
+        log(f"this stick is on a DIFFERENT Thread network than last time: "
+            f"{seen.get('name')} ({seen.get('extpanid')}) is now "
+            f"{now['name']} ({now['extpanid']})")
+        log("    Adopted another network, or erased the stick on purpose?  Then "
+            "this is expected, and devices paired on the old network are gone.")
+        log("    Did neither?  Then its settings storage is not keeping the "
+            "network across reboots and this will repeat on the next one.  "
+            "Restore the saved network data onto a different stick.")
+        now["previous"] = seen.get("extpanid")
+    else:
+        log(f"remembering this stick's network: {now['name']} ({now['extpanid']})")
+
+    try:
+        os.makedirs(os.path.dirname(IDENTITY_FILE), exist_ok=True)
+        with open(IDENTITY_FILE + ".tmp", "w") as fh:
+            json.dump(now, fh)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(IDENTITY_FILE + ".tmp", IDENTITY_FILE)
+    except OSError as e:
+        log(f"could not remember the network ({e}) — the check is off until this works")
+    return True
+
+
 def cmd_run():
     if not ENV["device"]:
         wait_for_configuration()
@@ -1377,6 +1440,8 @@ def cmd_run():
     last_status = time.time()
     last_check = time.time()
     last_probe = time.time()
+    last_identity = time.time() - 55        # first look shortly after start
+    identity_seen = False
     silent = 0
     # First reachability report soon after start, then every five minutes.
     last_check_reach = time.time() - 240
@@ -1463,6 +1528,9 @@ def cmd_run():
                         after_pump_start()
             else:
                 unreachable = 0
+        if not identity_seen and time.time() - last_identity >= 60:
+            last_identity = time.time()
+            identity_seen = check_identity()
         if time.time() - last_status >= 600:
             last_status = time.time()
             try:
@@ -1470,6 +1538,7 @@ def cmd_run():
                 log("status: " + " ".join(f"{k}={v}" for k, v in st.items()))
             except (urllib.error.URLError, OSError, ValueError):
                 log("status: stick not answering")
+            check_identity()
     log("stopping")
     stop_pump(pump)
 

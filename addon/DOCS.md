@@ -113,10 +113,37 @@ A flash costs about a minute of border routing. The Thread network itself
 survives it — it lives in the stick's flash, and no device has to be
 re-commissioned.
 
+## If your network is called `OpenThread-ESP`
+
+Firmware before 0.1.44 had no network of its own to fall back on: a stick with
+empty storage came up on the one compiled into it, and so did every other
+stick built from the same sources — same name, same PAN ID, and **the same
+network key**, which is a published default value. If your border router's
+Thread network is named `OpenThread-ESP`, it is that network, and anyone
+within radio range who knows the default can join it.
+
+Updating the firmware does not fix this, and cannot: the update deliberately
+leaves an existing network alone, because changing it would drop every
+commissioned device. Getting a private network means forming a new one and
+commissioning the devices onto it again — there is no way to rotate the key
+underneath them from here.
+
+Networks you created yourself, or adopted from another border router, are not
+affected: they carry their own key. Check on the add-on page under Network,
+or with `GET /node/dataset/active`.
+
 ## After the first start
 
 1. Watch the add-on log. Lines prefixed `[stick]` come from the firmware
-   itself; `br=running role=router` means border routing is up.
+   itself; `br=running role=router` means border routing is up. A stick
+   starting for the first time makes its own Thread network and names it
+   `THBR-` plus the last three bytes of its MAC address — that is the name to
+   look for in Home Assistant's Thread panel. The network is random and
+   belongs to that stick alone: its key is not shared with any other THBR, and
+   it is kept across firmware updates. It is *not* kept across an
+   `esptool erase-flash`, which leaves the stick to generate a fresh one and
+   the devices paired on the old network behind, so save the network data
+   while the stick is healthy.
 2. **Settings → System → Network → Network adapter**: enable your normal
    network adapter **and** `tap0`, then restart Home Assistant. Home Assistant
    binds its mDNS sockets per interface when it starts, so without this it

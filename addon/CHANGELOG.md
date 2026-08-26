@@ -4,6 +4,32 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.37
+
+Firmware unchanged at 0.1.44.
+
+- **The add-on notices when the stick's network changes.** A stick that makes
+  itself a random network is right once and a disaster repeated, and the
+  firmware cannot tell the two apart: OpenThread reports success on storing
+  the network even when the write did not survive, so a stick with failing
+  storage runs perfectly and comes up on a *new* network at the next reboot,
+  with every commissioned device left behind. The add-on remembers what it saw
+  and says so when it changes, naming both explanations — you adopted or
+  erased it on purpose, or its storage is not keeping the network. It catches
+  an accidental `esptool erase-flash` the same way.
+- **If your network is called `OpenThread-ESP`, read the new section in the
+  documentation.** Firmware before 0.1.44 had no network of its own: a stick
+  with empty storage came up on the one compiled in, together with the
+  published default key that every THBR shared. Updating does not repair that
+  and cannot, because the update deliberately leaves an existing network
+  alone; a private network means forming a new one and commissioning the
+  devices again. Networks you created or adopted yourself carry their own key
+  and are not affected.
+- Two things the previous release changed without saying so: an erased stick
+  no longer returns to a known network, which makes the saved network data the
+  only way back, and a fresh stick names its network `THBR-` plus three bytes
+  of its MAC address — the name to look for in the Thread panel.
+
 ## 2026.8.36
 
 **Firmware 0.1.44** — every stick brings up its own Thread network.
