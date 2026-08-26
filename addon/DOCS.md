@@ -107,6 +107,7 @@ flash: auto
 | `tap` | Name of the network interface the add-on creates. Default `tap0`. |
 | `web_allow` | Who may reach the add-on's page. Unset means Home Assistant only, which is what you want. `any` opens it to everything this machine is reachable on; a comma-separated list of addresses or networks opens it to those. |
 | `host_addr` / `stick_addr` | The private point-to-point addresses of the backbone, `192.168.45.1/24` and `192.168.45.2`. Change them only if that subnet collides with something on your network. |
+| `matter_addr` | Where the add-on forwards the stick's Bluetooth radio to, `host:port` of a Matter server that accepts a proxy radio. Default `127.0.0.1:5580`, which is Home Assistant's own Matter Server. **Set it to empty** on a machine with its own Bluetooth adapter: then nothing is forwarded, and the stick is told to stop offering its radio as well — which takes effect the next time the stick restarts. |
 | `stick_log` | How much of the stick's own log is repeated in this add-on's log. `quiet` (default) drops the border router's routine web and diagnostics chatter, which is the bulk of it and can otherwise push this add-on's own lines out of a rotated log within minutes. `all` repeats everything, `off` nothing. Warnings and errors are kept in every mode except `off`. |
 
 A flash costs about a minute of border routing. The Thread network itself

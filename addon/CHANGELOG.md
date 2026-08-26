@@ -4,6 +4,29 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.39
+
+Firmware unchanged at 0.1.46.
+
+- **The setting from 2026.8.38 now actually reaches the stick on an upgrade.**
+  The add-on asks the stick where it should offer its Bluetooth, and on a stick
+  that has not been flashed yet there is nothing to ask — the endpoint arrives
+  with the firmware, which the add-on installs itself moments later. It used to
+  take the first answer as final, so a stick upgraded from an older firmware
+  kept dialling although both ends were ready. It asks again now, and a flash
+  makes it ask again immediately.
+- **`matter_addr` is an add-on option.** Under Home Assistant the setting that
+  decides both ends of the Bluetooth proxy could not be reached at all, and a
+  workaround applied directly to the stick was quietly reverted at every
+  restart. Setting it to empty is how a machine with its own Bluetooth adapter
+  says it wants neither the forwarding nor the offer.
+- A target that is not `host:port` now switches off both ends and says so,
+  instead of stopping the forwarding and leaving the stick to dial.
+- Restoring saved network data re-arms both checks, so the network change is
+  reported while the restore is still the obvious reason for it.
+- When the add-on changes the stick's setting it says what was there before,
+  and how to make the change take effect.
+
 ## 2026.8.38
 
 **Firmware 0.1.46** — the stick can be told to keep its Bluetooth to itself.

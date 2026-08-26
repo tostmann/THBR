@@ -163,15 +163,18 @@ Two ends have to agree, and one setting decides both:
 | *empty* | no forwarding, and the stick is told to keep its radio to itself |
 
 Leave it empty on a host that has its own Bluetooth adapter. Before firmware
-0.1.45 that was only half possible — the forwarder stopped, but the stick went
+0.1.46 that was only half possible — the forwarder stopped, but the stick went
 on dialling a port nobody served, once a minute for the life of the device.
 Now the container writes the setting to the stick, which drops the whole
-Bluetooth stack when nothing is configured.
+Bluetooth stack when nothing is configured. The setting needs firmware 0.1.46;
+an older stick says so in the log, and the add-on brings the firmware with it.
 
 The setting lives on the stick and survives updates. It takes effect at the
 next restart of the stick, not immediately: a border router should not restart
-itself because a setting changed. Ask it directly if you want to know where it
-stands:
+itself because a setting changed. Restart it when it suits you — the add-on's
+page has a button, or `curl -X POST http://192.168.45.2:8082/reboot` — and
+until then the stick carries on as before. Ask it directly if you want to know
+where it stands:
 
 ```
 curl http://192.168.45.2:8082/ble_proxy

@@ -120,8 +120,16 @@ if os.path.exists(OPTIONS_FILE):
         for _key, _env in (("device", "device"), ("flash", "policy"), ("tap", "tap"),
                            ("host_addr", "host_addr"), ("stick_addr", "stick"),
                            ("web_allow", "web_allow"),
-                           ("stick_log", "stick_log")):
-            if _opts.get(_key) not in (None, ""):
+                           ("stick_log", "stick_log"),
+                           ("matter_addr", "matter_addr")):
+            # An empty matter_addr is a VALUE, not an absent option: it is how
+            # a host with its own Bluetooth says it wants neither the forwarder
+            # nor the stick's offer.  Everything else keeps the old rule that
+            # blank means "not set, use the default".
+            if _key == "matter_addr":
+                if _key in _opts and _opts[_key] is not None:
+                    ENV[_env] = str(_opts[_key])
+            elif _opts.get(_key) not in (None, ""):
                 ENV[_env] = str(_opts[_key])
         ENV["policy"] = ENV["policy"].lower()
     except (OSError, ValueError) as _e:
@@ -1303,6 +1311,9 @@ def flash_cycle(pump, m, reason, force=False):
 
 # --------------------------------------------------------------------------- commands
 
+_ble_absent_logged = False
+
+
 def sync_ble_proxy():
     """Tell the stick where to offer its radio, or that nobody here wants it.
 
@@ -1319,14 +1330,35 @@ def sync_ble_proxy():
     Returns True once there is nothing left to do, so the caller can stop.
     """
     host_ip = ENV["host_addr"].split("/")[0]
-    want = f"ws://{host_ip}:{ENV['matter_port']}/ble" if ENV["matter_addr"].strip() else ""
+    # The forwarder refuses a target that is not host:port and switches itself
+    # off.  This has to agree with it: a typo used to leave the forwarder off
+    # AND the stick dialling, which is the exact symptom the setting exists to
+    # remove.
+    target = ENV["matter_addr"].strip()
+    host, _, port = target.rpartition(":")
+    usable = bool(target) and bool(host) and port.isdigit()
+    if target and not usable:
+        log(f"THBR_MATTER_ADDR={target} is not host:port — telling the stick "
+            f"not to offer its radio either")
+    want = f"ws://{host_ip}:{ENV['matter_port']}/ble" if usable else ""
     url = f"http://{ENV['stick']}:{ENV['info_port']}/ble_proxy"
     try:
         cur = http_json(url)
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            log("this firmware has no BLE proxy setting — leaving it as built")
-            return True                 # older firmware; nothing to sync
+            # Firmware older than 0.1.46 has no such endpoint.  Say so once and
+            # keep asking: the firmware under this container is not a constant,
+            # and the moment it stops being one is a flash — which is this
+            # container's job.  Giving up here for good is how the first
+            # upgrade to 0.1.46 left a stick still dialling: the check ran
+            # twenty-five seconds before the flash, found no endpoint, and was
+            # never asked again.
+            global _ble_absent_logged
+            if not _ble_absent_logged:
+                log("this firmware has no BLE proxy setting — will ask again "
+                    "after it changes")
+                _ble_absent_logged = True
+            return False
         return False
     except (urllib.error.URLError, OSError, ValueError):
         return False
@@ -1344,11 +1376,13 @@ def sync_ble_proxy():
         log(f"could not set the stick's BLE proxy endpoint ({e})")
         return False
 
+    had = cur.get("uri") or "nothing"
     if want:
-        log(f"stick will offer its Bluetooth radio at {want} — from the next restart")
+        log(f"stick will offer its Bluetooth radio at {want} (was: {had})")
     else:
-        log("stick told to keep its Bluetooth radio to itself (THBR_MATTER_ADDR "
-            "is empty) — from the next restart it stops dialling")
+        log(f"stick told to keep its Bluetooth radio to itself (was: {had})")
+    log("    takes effect when the stick restarts — the web interface has a "
+        "button for it, or POST /reboot on the info API")
     return True
 
 
@@ -1516,6 +1550,12 @@ def cmd_run():
             wait_for_device(ENV["device"], 60)
             pump = start_pump()
             after_pump_start()
+            # A restore writes the whole partition: the network is deliberately
+            # a different one now, and the BLE setting came with it.  Both
+            # checks have to look again, and check_identity() should report the
+            # change while the restore is still the obvious reason for it.
+            identity_seen = False
+            ble_synced = False
             with open(RESTORE_RES + ".tmp", "w") as fh:
                 fh.write(result)
             os.replace(RESTORE_RES + ".tmp", RESTORE_RES)
@@ -1541,6 +1581,9 @@ def cmd_run():
             else:
                 pump, ok = flash_cycle(pump, m, "requested" + (" (forced)" if force else ""), force)
                 result = "OK" if ok else "FAILED"
+                # The firmware just changed underneath both checks: ask again.
+                identity_seen = False
+                ble_synced = False
             with open(RES_FILE + ".tmp", "w") as fh:
                 fh.write(result)
             os.replace(RES_FILE + ".tmp", RES_FILE)
