@@ -18,6 +18,37 @@ NAMESPACE="${THBR_NAMESPACE:-tostmann}"
 VERSION="$(sed -n 's/^version: *"\(.*\)"/\1/p' "$ROOT/addon/config.yaml")"
 [ -n "$VERSION" ] || { echo "no version in addon/config.yaml" >&2; exit 1; }
 
+# A version that is already on the registry must not be published a second
+# time with different content.
+#
+# This is the other half of the mistake 2026.8.39 had to repair: a fix landed
+# after the release commit, and the tag went on pointing at a tree the fix was
+# not in.  Publishing the fix under the SAME version would have looked like a
+# repair and produced the worse state -- an image and a git tag with the same
+# name and different content, with no way for anyone to tell which they have.
+# A fix after a release is a new release.  Bump the version.
+#
+# The registry is asked because it is the only party that knows what is
+# actually out there: this repository has no remote, and the tags live in the
+# published tree, which is not necessarily beside us.  If the registry cannot
+# be reached the check says so and stands aside -- it guards against a mistake,
+# it is not an authority on whether you may publish.
+if [ -z "${THBR_REPUBLISH:-}" ]; then
+    tags_url="https://hub.docker.com/v2/repositories/$NAMESPACE/thbr/tags/$VERSION"
+    http_code="$(curl -s -o /dev/null -m 20 -w '%{http_code}' "$tags_url" || echo 000)"
+    case "$http_code" in
+        200) echo "$NAMESPACE/thbr:$VERSION is already on the registry." >&2
+             echo "  Publishing it again would give one name two contents." >&2
+             echo "  A fix after a release is a new release: raise the version in" >&2
+             echo "  addon/config.yaml (and compose.yaml, and add a CHANGELOG entry)." >&2
+             echo "  Re-pushing the identical build on purpose: THBR_REPUBLISH=1." >&2
+             exit 1 ;;
+        404) echo "version $VERSION is new to the registry" ;;
+        *)   echo "note: could not ask the registry about $VERSION (HTTP $http_code)" \
+                  "-- publishing anyway" ;;
+    esac
+fi
+
 # The bundled firmware must be one version, not one per chip.
 #
 # dist.sh replaces only the chip it was just run for -- deliberately, because

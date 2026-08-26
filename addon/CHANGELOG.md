@@ -4,6 +4,24 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.40
+
+Firmware unchanged at 0.1.46. Nothing changes on a running installation; this
+release is about the build side keeping its own promises.
+
+- **A version that is already published cannot be published again.**
+  `scripts/publish_images.sh` asks the registry first and refuses a version it
+  already carries. Re-pushing under the same name is the tempting repair when a
+  fix lands after a release, and it gives one name two contents with no way for
+  anyone to tell which they have. A fix after a release is a new release.
+  `THBR_REPUBLISH=1` covers re-pushing an identical build on purpose.
+- **`scripts/release_check.sh` names what is sitting here unreleased.** No check
+  in the publishing path can see this: at the moment of publishing nothing is
+  wrong yet, and the damage is done by the commit that comes afterwards and
+  stays — which is exactly how 2026.8.38 shipped without the fix that 2026.8.39
+  had to carry. It compares the files that reach users against the last release
+  and says what has not been in one, committed or not.
+
 ## 2026.8.39
 
 Firmware unchanged at 0.1.46.
