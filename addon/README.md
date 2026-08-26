@@ -146,6 +146,52 @@ because that saved copy is the only way back.
 There is no OTA on the stick and a running border router is never reflashed
 unasked.
 
+## Lending the stick's Bluetooth (`THBR_MATTER_ADDR`)
+
+A Matter device is commissioned over Bluetooth before it has a network, and
+the machine running the Matter server does not always have an adapter within
+range of the device. The stick has one, and it can lend it: the firmware opens
+a websocket to a Matter server that accepts a proxy radio, and the server
+drives the stick's Bluetooth as if it were local.
+
+Two ends have to agree, and one setting decides both:
+
+| `THBR_MATTER_ADDR` | what happens |
+|--------------------|--------------|
+| `127.0.0.1:5580` (default) | the container forwards between the stick and a Matter server on the host, and tells the stick to offer its radio |
+| any other `host:port` | the same, with the Matter server somewhere else |
+| *empty* | no forwarding, and the stick is told to keep its radio to itself |
+
+Leave it empty on a host that has its own Bluetooth adapter. Before firmware
+0.1.45 that was only half possible — the forwarder stopped, but the stick went
+on dialling a port nobody served, once a minute for the life of the device.
+Now the container writes the setting to the stick, which drops the whole
+Bluetooth stack when nothing is configured.
+
+The setting lives on the stick and survives updates. It takes effect at the
+next restart of the stick, not immediately: a border router should not restart
+itself because a setting changed. Ask it directly if you want to know where it
+stands:
+
+```
+curl http://192.168.45.2:8082/ble_proxy
+{"uri":"ws://192.168.45.1:5580/ble","source":"nvs","enabled":true}
+```
+
+`source` says whether the value came from the stick's storage or from the
+firmware's built-in default; `enabled` says whether this boot started the
+radio offer at all. To set it by hand — the container does this for you, so
+this is for a stick used without one:
+
+```
+curl -X POST http://192.168.45.2:8082/ble_proxy \
+     -H 'Content-Type: application/json' -d '{"uri":""}'
+```
+
+Not every Matter server accepts a proxy radio. If yours does not, the add-on
+says so once rather than leaving you to wonder why commissioning finds
+nothing.
+
 ## Who can reach the web interface
 
 Under plain Docker, everyone this host is reachable by. There is no ingress to

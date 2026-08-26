@@ -1303,6 +1303,55 @@ def flash_cycle(pump, m, reason, force=False):
 
 # --------------------------------------------------------------------------- commands
 
+def sync_ble_proxy():
+    """Tell the stick where to offer its radio, or that nobody here wants it.
+
+    The stick can lend its Bluetooth to a Matter server, and until firmware
+    0.1.45 where it dialled was compiled in: a host with its own adapter could
+    not turn the offer off, so the firmware called a port nobody served, once a
+    minute, forever.  Now it is a setting on the stick, and THBR_MATTER_ADDR
+    decides it -- one option for both ends, because a forwarder that is off and
+    a stick that keeps dialling is a combination nobody wants on purpose.
+
+    Written only when it differs, and never applied by restarting the stick:
+    the border router decides when it restarts, not a setting.
+
+    Returns True once there is nothing left to do, so the caller can stop.
+    """
+    host_ip = ENV["host_addr"].split("/")[0]
+    want = f"ws://{host_ip}:{ENV['matter_port']}/ble" if ENV["matter_addr"].strip() else ""
+    url = f"http://{ENV['stick']}:{ENV['info_port']}/ble_proxy"
+    try:
+        cur = http_json(url)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            log("this firmware has no BLE proxy setting — leaving it as built")
+            return True                 # older firmware; nothing to sync
+        return False
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+    if cur.get("uri") == want:
+        return True
+
+    body = json.dumps({"uri": want}).encode()
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            r.read()
+    except (urllib.error.URLError, OSError) as e:
+        log(f"could not set the stick's BLE proxy endpoint ({e})")
+        return False
+
+    if want:
+        log(f"stick will offer its Bluetooth radio at {want} — from the next restart")
+    else:
+        log("stick told to keep its Bluetooth radio to itself (THBR_MATTER_ADDR "
+            "is empty) — from the next restart it stops dialling")
+    return True
+
+
 def check_identity():
     """Notice when the stick comes up on a different Thread network than before.
 
@@ -1442,6 +1491,8 @@ def cmd_run():
     last_probe = time.time()
     last_identity = time.time() - 55        # first look shortly after start
     identity_seen = False
+    last_ble = time.time() - 55
+    ble_synced = False
     silent = 0
     # First reachability report soon after start, then every five minutes.
     last_check_reach = time.time() - 240
@@ -1531,6 +1582,9 @@ def cmd_run():
         if not identity_seen and time.time() - last_identity >= 60:
             last_identity = time.time()
             identity_seen = check_identity()
+        if not ble_synced and time.time() - last_ble >= 60:
+            last_ble = time.time()
+            ble_synced = sync_ble_proxy()
         if time.time() - last_status >= 600:
             last_status = time.time()
             try:

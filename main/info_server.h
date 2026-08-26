@@ -13,6 +13,7 @@
 
 #include "esp_err.h"
 #include <stdbool.h>
+#include <stddef.h>
 
 /* Start the server on CONFIG_THBR_INFO_PORT.  Call once the backbone netif
  * exists; the handlers answer from then on, whatever the border router does. */
@@ -30,3 +31,17 @@ esp_err_t info_server_start(void);
 /* Tell /status that the OpenThread instance (and its lock) exist.  Before
  * this, /status reports br/role as "n/a" instead of touching the stack. */
 void info_server_set_ot_ready(bool ready);
+
+/* Whether the stick offers its radio at all, for /ble_proxy to report. */
+void info_server_set_ble_proxy(bool enabled);
+
+/* Where the BLE proxy dials, and where that answer came from.
+ *
+ * The setting lives here rather than with the proxy because ble_proxy.c is
+ * compiled away entirely on builds without NimBLE, while this file — and the
+ * endpoint that reads and writes the setting — is always built.  `out` gets
+ * the effective value: what NVS holds, else the compiled default.  An empty
+ * string means the stick does not offer its radio at all.
+ */
+void thbr_ble_uri_get(char *out, size_t len, bool *from_nvs);
+esp_err_t thbr_ble_uri_set(const char *uri);

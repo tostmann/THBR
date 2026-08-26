@@ -439,7 +439,25 @@ void app_main(void)
      * and that is the failure that looks like a healthy border router from the
      * outside.  Only this task is watched: the idle tasks are deliberately not,
      * so a busy radio stack cannot trigger a reboot. */
-    thbr_ble_proxy_start(CONFIG_THBR_BLE_PROXY_URI);  /* leer ohne NimBLE */
+    /* Where the radio offer goes is a setting now, not a compile-time
+     * constant: NVS first, the compiled value as the default (see
+     * info_server.h).  An empty setting means this host does not want the
+     * offer -- a host with its own Bluetooth adapter -- and then the NimBLE
+     * stack stays down entirely instead of dialling a port nobody serves once
+     * a minute for the life of the device. */
+    {
+        char ble_uri[128];
+        bool from_nvs = false;
+        thbr_ble_uri_get(ble_uri, sizeof(ble_uri), &from_nvs);
+        if (ble_uri[0]) {
+            thbr_ble_proxy_start(ble_uri);          /* a no-op without NimBLE */
+            info_server_set_ble_proxy(true);
+        } else {
+            ESP_LOGI(TAG, "BLE proxy off by configuration — this stick keeps "
+                          "its radio to itself");
+            info_server_set_ble_proxy(false);
+        }
+    }
 
     esp_err_t werr = esp_task_wdt_add(NULL);
     ESP_LOGI(TAG, "heartbeat registered with the task watchdog: %s", esp_err_to_name(werr));

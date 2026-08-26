@@ -4,6 +4,32 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.38
+
+**Firmware 0.1.46** — the stick can be told to keep its Bluetooth to itself.
+
+- **Where the stick offers its radio is a setting now, not a compiled
+  constant.** A host with its own Bluetooth adapter has no use for the offer,
+  and until now it could only be half switched off: the add-on stopped
+  forwarding, but the stick went on dialling a port nobody served, once a
+  minute for the life of the device. `THBR_MATTER_ADDR` decides both ends —
+  empty means no forwarding *and* the stick is told to stop asking. With
+  nothing configured the firmware leaves the whole Bluetooth stack down, which
+  is worth about 44 KB of heap.
+- **The setting lives on the stick and survives updates**, under
+  `GET`/`POST /ble_proxy` on the info API. It reports where the value came
+  from — the stick's own storage or the firmware default — and whether this
+  boot started the radio offer at all. It takes effect at the next restart of
+  the stick, not immediately: a border router should not restart itself
+  because a setting changed. The README explains both ends.
+- **Fixes an endpoint outage that never shipped.** Adding the new endpoint
+  pushed the info server past its handler limit, and registration fails
+  silently there: `/backbone` and `/reboot` answered 404 while everything else
+  looked healthy — which would have cost the host its route into the mesh on
+  any system that cannot learn it from a router advertisement. The limit is
+  raised and every registration is now checked, so the next endpoint cannot
+  repeat it.
+
 ## 2026.8.37
 
 Firmware unchanged at 0.1.44.

@@ -7,6 +7,9 @@
 #include "esp_http_server.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
+#include "nvs.h"
+#include "nvs_flash.h"
+#include "cJSON.h"
 #include "esp_mac.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -137,6 +140,107 @@ static void reboot_task(void *ctx)
     esp_restart();
 }
 
+/* ---------------------------------------------------------------- BLE proxy
+
+   The stick can lend its Bluetooth radio to a Matter server, and where it
+   dials used to be compiled in.  That was the wrong place twice over: a host
+   with its own Bluetooth has no use for the offer and could not turn it off,
+   so the firmware dialled a port nobody served once a minute forever; and a
+   stale generated sdkconfig once shipped a bench address to users (0.1.42).
+   The address now lives in NVS, with the compiled value as the default, and
+   an empty string switches the radio offer off entirely.
+*/
+#define BLE_NVS_NS   "thbr"
+#define BLE_NVS_KEY  "ble_uri"
+
+static bool s_ble_enabled;
+
+void info_server_set_ble_proxy(bool enabled) { s_ble_enabled = enabled; }
+
+void thbr_ble_uri_get(char *out, size_t len, bool *from_nvs)
+{
+    nvs_handle_t h;
+    if (from_nvs) {
+        *from_nvs = false;
+    }
+    if (nvs_open(BLE_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        size_t n = len;
+        esp_err_t err = nvs_get_str(h, BLE_NVS_KEY, out, &n);
+        nvs_close(h);
+        if (err == ESP_OK) {
+            if (from_nvs) {
+                *from_nvs = true;
+            }
+            return;
+        }
+    }
+    snprintf(out, len, "%s", CONFIG_THBR_BLE_PROXY_URI);
+}
+
+esp_err_t thbr_ble_uri_set(const char *uri)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(BLE_NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_str(h, BLE_NVS_KEY, uri ? uri : "");
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+static esp_err_t ble_proxy_get(httpd_req_t *req)
+{
+    char uri[128];
+    bool from_nvs = false;
+    thbr_ble_uri_get(uri, sizeof(uri), &from_nvs);
+    char body[256];
+    snprintf(body, sizeof(body),
+             "{\"uri\":\"%s\",\"source\":\"%s\",\"enabled\":%s}",
+             uri, from_nvs ? "nvs" : "built-in", s_ble_enabled ? "true" : "false");
+    return send_json(req, body);
+}
+
+static esp_err_t ble_proxy_post(httpd_req_t *req)
+{
+    char buf[256];
+    int len = req->content_len < (int)sizeof(buf) - 1 ? req->content_len : (int)sizeof(buf) - 1;
+    int got = len > 0 ? httpd_req_recv(req, buf, len) : 0;
+    if (got < 0) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "no body");
+    }
+    buf[got] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    cJSON *item = root ? cJSON_GetObjectItem(root, "uri") : NULL;
+    if (!item || !cJSON_IsString(item)) {
+        cJSON_Delete(root);
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                   "expected {\"uri\": \"ws://host:port/ble\"} "
+                                   "or an empty string to switch the radio offer off");
+    }
+    esp_err_t err = thbr_ble_uri_set(item->valuestring);
+    char stored[128];
+    snprintf(stored, sizeof(stored), "%s", item->valuestring);
+    cJSON_Delete(root);
+    if (err != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "could not store it");
+    }
+    ESP_LOGI(TAG, "BLE proxy endpoint set to '%s' — takes effect on the next restart", stored);
+    /* Deliberately NOT applied live: bringing the NimBLE host and the
+       websocket client up and down again is a bigger operation than this
+       setting is worth, and a border router should not restart itself because
+       a setting changed.  The caller decides when the stick restarts. */
+    char body[256];
+    snprintf(body, sizeof(body),
+             "{\"uri\":\"%s\",\"stored\":true,\"applies\":\"next restart\"}", stored);
+    return send_json(req, body);
+}
+
+
 static esp_err_t reboot_post(httpd_req_t *req)
 {
     esp_err_t err = send_json(req, "{\"rebooting\":true}");
@@ -151,7 +255,13 @@ esp_err_t info_server_start(void)
     /* esp_ot_br_server's instance owns the default control port (32768); a
      * second httpd on the same control port fails to start. */
     cfg.ctrl_port = 32769;
-    cfg.max_uri_handlers = 4;
+    /* One slot per handler, and httpd_register_uri_handler() FAILS QUIETLY
+     * when they run out -- the endpoints registered last simply answer 404
+     * afterwards.  Adding /ble_proxy without raising this cost /backbone and
+     * /reboot exactly that way, which would have taken the host's route into
+     * the mesh with it on any system that cannot learn it from a router
+     * advertisement.  Count the registrations below before changing this. */
+    cfg.max_uri_handlers = 8;
     cfg.max_open_sockets = 3;
     cfg.lru_purge_enable = true;
 
@@ -163,12 +273,21 @@ esp_err_t info_server_start(void)
     const httpd_uri_t version_uri = { .uri = "/version", .method = HTTP_GET, .handler = version_get };
     const httpd_uri_t status_uri  = { .uri = "/status",  .method = HTTP_GET, .handler = status_get };
     const httpd_uri_t backbone_uri = { .uri = "/backbone", .method = HTTP_GET, .handler = backbone_get };
-    httpd_register_uri_handler(s_server, &version_uri);
-    httpd_register_uri_handler(s_server, &status_uri);
+#define REG(u) do { \
+        if (httpd_register_uri_handler(s_server, &(u)) != ESP_OK) { \
+            ESP_LOGE(TAG, "could not register %s — raise max_uri_handlers", (u).uri); \
+        } \
+    } while (0)
+    REG(version_uri);
+    REG(status_uri);
     const httpd_uri_t reboot_uri = { .uri = "/reboot", .method = HTTP_POST, .handler = reboot_post };
-    httpd_register_uri_handler(s_server, &backbone_uri);
-    httpd_register_uri_handler(s_server, &reboot_uri);
-    ESP_LOGI(TAG, "info API on port %d: /version /status /backbone, POST /reboot (fw %s)",
+    const httpd_uri_t ble_get_uri  = { .uri = "/ble_proxy", .method = HTTP_GET,  .handler = ble_proxy_get };
+    const httpd_uri_t ble_post_uri = { .uri = "/ble_proxy", .method = HTTP_POST, .handler = ble_proxy_post };
+    REG(ble_get_uri);
+    REG(ble_post_uri);
+    REG(backbone_uri);
+    REG(reboot_uri);
+    ESP_LOGI(TAG, "info API on port %d: /version /status /backbone /ble_proxy, POST /reboot (fw %s)",
              CONFIG_THBR_INFO_PORT, FW_VERSION_STRING);
     return ESP_OK;
 }
