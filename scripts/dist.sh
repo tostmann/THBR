@@ -104,7 +104,10 @@ for off, rel in images:
 # Only string values survive into the image recognisably -- but that is exactly
 # the class of setting that points somewhere, and so the class that hurts when
 # it points at the wrong place.
-STRING_CHECKS = [("THBR_BLE_PROXY_URI", "BT_ENABLED")]
+STRING_CHECKS = [("THBR_BLE_PROXY_URI", "BT_ENABLED"),
+                 ("THBR_TAP_STICK_IPV4", "THBR_TRANSPORT_TAP"),
+                 ("THBR_TAP_HOST_IPV4", "THBR_TRANSPORT_TAP"),
+                 ("THBR_TAP_NETMASK", "THBR_TRANSPORT_TAP")]
 for key, gate in STRING_CHECKS:
     if gate and not effective(gate):
         continue
@@ -117,7 +120,10 @@ for key, gate in STRING_CHECKS:
         sys.exit(f"{key} is {have!r} in this build, but the tree says {want!r} "
                  f"({whence}).\n"
                  f"  The generated sdkconfig this was built from is stale.\n"
-                 f"  Delete it and rebuild -- scripts/build.sh does that for you.")
+                 f"  Delete it and rebuild -- scripts/build.sh does that for you.\n"
+                 f"  Changed it on purpose?  Then the tree does not know yet: put\n"
+                 f"  it in an sdkconfig.defaults overlay, which is what this check\n"
+                 f"  reads as intent, and menuconfig alone is not.")
     if app and want.encode() not in open(app, "rb").read():
         sys.exit(f"{os.path.basename(app)} does not contain {key}={want!r} -- "
                  f"the image and its config disagree.")

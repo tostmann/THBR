@@ -354,7 +354,9 @@ does not need the stick's radio, and only the radio needs forwarding.
 
 **`br=stopped` in the log for several minutes** — the firmware detects and
 repairs the most common cause itself. If it persists, open an issue and
-include the add-on log.
+include the add-on log. From add-on 2026.8.35 it is safe to share: the add-on
+blanks out the network credentials that firmware up to 0.1.42 prints at every
+boot.
 
 **After flashing, the stick does not come back** — flashing resets the stick,
 which makes it disconnect and re-appear on the USB bus, possibly under a

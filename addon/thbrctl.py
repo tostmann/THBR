@@ -1012,6 +1012,45 @@ STICK_QUIET_TAGS = ("web_base", "obtr_web", "web_api")
 STICK_LINE = re.compile(r"^([VDIWE]) \(\d+\) ([A-Za-z0-9_.\-]+):")
 
 
+# A stick can send us its own credentials.  Firmware up to 0.1.42 dumps the
+# active dataset as TLV hex at every boot, and that hex carries the Thread
+# network key -- the whole point of it being that a joiner can use it.  The
+# line arrives here like any other and would go straight into `docker logs`,
+# which is exactly what both READMEs tell a user with a problem to attach to
+# an issue.  The web UI already refuses to show the key; this is the same
+# refusal one layer down.
+#
+# The firmware stopped dumping it after 0.1.42, but the sticks already in the
+# field have not, so the redaction stays: it costs one regex per line and it
+# is the only protection an installation gets without a reflash.
+SECRET_LINE = re.compile(r"(active dataset tlvs:\s*)([0-9a-fA-F]{16,})")
+
+# The same hex, arriving without its label.  The sink sends fixed-size chunks
+# out of a ring that is full at boot, and this line is longer than one chunk.
+# Normally the reassembly below puts it back together -- but if the datagram
+# carrying the start is dropped, or more than the flush timeout passes between
+# two chunks, the remainder shows up as a line of its own with nothing to match
+# on.  A bare run of hex is never a legitimate log line: every line the stick
+# writes carries its `L (ts) tag:` prefix, so anything that looks like this IS
+# a fragment.  The threshold is eight bytes rather than something safer-looking
+# because the tail after a lost datagram is whatever length it is, and a short
+# one can still hold most of a sixteen-byte key.  Nothing of value is lost by
+# dropping a bare eight-byte fragment.
+SECRET_FRAGMENT = re.compile(r"^[0-9a-fA-F]{16,}$")
+
+
+def redact_secrets(line):
+    """Blank out credential material a stick may have put in its log."""
+    def hide(m):
+        return (f"{m.group(1)}<redacted: {len(m.group(2)) // 2} bytes carrying "
+                f"the network key — GET /node/dataset/active if you need it>")
+    line = SECRET_LINE.sub(hide, line)
+    if SECRET_FRAGMENT.match(line.strip()):
+        return ("<redacted: looks like a fragment of the stick's dataset "
+                "dump, which carries the network key>")
+    return line
+
+
 def stick_line_wanted(line, mode):
     """Whether a line from the stick is worth repeating on our stdout."""
     if mode == "off":
@@ -1052,7 +1091,7 @@ def log_relay():
             data, _ = sock.recvfrom(2048)
         except socket.timeout:
             if tail.strip() and stick_line_wanted(tail, mode):
-                print("[stick]", tail.rstrip(), flush=True)
+                print("[stick]", redact_secrets(tail.rstrip()), flush=True)
             tail = ""
             continue
         text = tail + data.decode("utf-8", "replace")
@@ -1060,7 +1099,7 @@ def log_relay():
         tail = lines.pop()
         for line in lines:
             if line.strip() and stick_line_wanted(line, mode):
-                print("[stick]", line.rstrip(), flush=True)
+                print("[stick]", redact_secrets(line.rstrip()), flush=True)
 
 
 # --------------------------------------------------------------------------- flashing

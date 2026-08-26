@@ -4,6 +4,42 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.35
+
+**Firmware 0.1.43** — the network key stops travelling in the log.
+
+- **The stick no longer prints its credentials.** At every boot the firmware
+  dumped the active dataset as TLV hex, because without a serial CLI that hex
+  is how a second node joins a network. It is also the network key, it rode the
+  UDP log sink into the container's log, and both this page and the README ask
+  a user with a problem to attach that log to an issue — while the web
+  interface has always refused to show the key. The firmware now names the
+  network (name, channel, PAN ID, extended PAN ID, all of it in every beacon
+  anyway) and says where the credentials actually live: the web interface, or
+  `GET /node/dataset/active`.
+- **And the add-on blanks the old line out.** Sticks already in the field keep
+  sending it until they are reflashed, so the add-on redacts it on the way into
+  the log — including the case where the line arrives split across two
+  datagrams and the tail turns up without its label. From this release on, the
+  add-on log is safe to attach to an issue.
+- **A release cannot ship one firmware and promise another.** `dist.sh`
+  replaces only the bundle of the chip it was just run for, and nothing
+  compared the results: 2026.8.34 shipped 0.1.42 for the C6 and 0.1.40 for the
+  C5 while this file said "firmware 0.1.42" and the docs promised an mDNS fix
+  half the users did not get. `publish_images.sh` now checks every bundle
+  against the others and against the version this file claims, and stops if
+  they disagree. `THBR_ALLOW_FW_DRIFT=1` publishes a deliberate exception,
+  which then belongs here in writing.
+- The build-time intent check grows the backbone addresses (stick, host,
+  netmask): the same class as the proxy endpoint that went stale in 2026.8.33 —
+  a string that points somewhere.
+- **One release, one firmware number, across chips.** The build counter
+  advanced on every build, so a release covering two chips produced two
+  different firmware versions — which is how 0.1.42 and 0.1.40 came to sit in
+  one image. `THBR_NO_BUMP=1` holds the number for the second and further
+  chips of the same release; the counter stays monotonic per release instead
+  of per invocation.
+
 ## 2026.8.34
 
 **Firmware 0.1.42** — the Bluetooth proxy dials the documented address again.

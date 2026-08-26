@@ -8,6 +8,7 @@
 /managed_components/
 /build/
 /.thbr_stage
+/.thbr_stage_*
 __pycache__/
 *.pyc
 ._*

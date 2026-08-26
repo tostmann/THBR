@@ -3,10 +3,9 @@
  * serial IP link (PPP over the native USB-Serial/JTAG port), not WiFi and not
  * Ethernet.
  *
- * Rationale, measurements and the HAOS/TAP product lane: PLAN.md and
- * ~/.claude/docs/ppp-ncp-transport-busware.md.  Sibling project TBR does the
- * same job with a W5500 Ethernet backbone and is the source of this control
- * flow.
+ * Rationale, measurements and the HAOS/TAP product lane: PLAN.md.  Sibling
+ * project TBR does the same job with a W5500 Ethernet backbone and is the
+ * source of this control flow.
  *
  * THE PORT HANDOVER
  * -----------------
@@ -135,18 +134,31 @@ static void border_router_init_task(void *ctx)
              (oterr == OT_ERROR_NONE) ? "resumed from NVS" : "created",
              esp_err_to_name(err));
 
-    /* Dump the active dataset as TLV hex.  Without a CLI this is the only way
-     * to learn the network credentials, and it is exactly what a second node
-     * needs in order to join:  ot_cli> dataset set active <hex> */
+    /* Name the network, but do not print its key.
+     *
+     * This used to dump the active dataset as TLV hex, precisely because that
+     * hex is what a second node needs (ot_cli> dataset set active <hex>).  The
+     * hex also carries the network key, the line travels to the host over the
+     * UDP log sink and lands in the container log -- and both READMEs ask a
+     * user with a problem to attach that log to an issue.  The credentials
+     * were leaving through the one door the web UI deliberately keeps shut.
+     *
+     * What identifies the network is on the air in every beacon anyway and
+     * stays here; the credentials come from the web UI or from REST
+     * /node/dataset/active, which is what tools/adopt_dataset.sh already uses.
+     */
     {
-        otOperationalDatasetTlvs tlvs;
-        if (otDatasetGetActiveTlvs(esp_openthread_get_instance(), &tlvs) == OT_ERROR_NONE) {
-            char hex[2 * OT_OPERATIONAL_DATASET_MAX_LENGTH + 1];
-            for (uint8_t i = 0; i < tlvs.mLength; i++) {
-                snprintf(&hex[2 * i], 3, "%02x", tlvs.mTlvs[i]);
-            }
-            hex[2 * tlvs.mLength] = '\0';
-            ESP_LOGI(TAG, "active dataset tlvs: %s", hex);
+        otOperationalDataset ds;
+        if (otDatasetGetActive(esp_openthread_get_instance(), &ds) == OT_ERROR_NONE) {
+            ESP_LOGI(TAG,
+                     "thread network '%s': channel %u, panid 0x%04x, extpanid "
+                     "%02x%02x%02x%02x%02x%02x%02x%02x "
+                     "(credentials: web UI, or GET /node/dataset/active)",
+                     ds.mNetworkName.m8, ds.mChannel, ds.mPanId,
+                     ds.mExtendedPanId.m8[0], ds.mExtendedPanId.m8[1],
+                     ds.mExtendedPanId.m8[2], ds.mExtendedPanId.m8[3],
+                     ds.mExtendedPanId.m8[4], ds.mExtendedPanId.m8[5],
+                     ds.mExtendedPanId.m8[6], ds.mExtendedPanId.m8[7]);
         }
     }
 

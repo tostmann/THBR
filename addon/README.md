@@ -182,7 +182,8 @@ firmware build option).
   route advertisements and cannot reach Thread devices.
 - **`br=stopped` in the `[stick]` log for minutes** — the firmware probes and
   repairs the interface index itself; if it persists, open an issue with
-  `docker logs thbr`.
+  `docker logs thbr`. From add-on 2026.8.35 the log is safe to share: it
+  blanks out the network credentials older firmware prints at boot.
 - **Matter devices unavailable after switching from another border router** —
   the matter-server container may pin `--primary-interface` to the LAN; it must
   be `tap0` or unset.
