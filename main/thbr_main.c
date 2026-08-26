@@ -51,6 +51,7 @@ void thbr_ble_proxy_start(const char *uri);
 #include "esp_openthread_netif_glue.h"
 #include "openthread/border_routing.h"
 #include "openthread/dataset.h"
+#include "openthread/dataset_ftd.h"
 #include "openthread/ip6.h"
 #include "openthread/thread.h"
 #include "openthread/platform/infra_if.h"
@@ -127,12 +128,54 @@ static void border_router_init_task(void *ctx)
      * the dataset in NVS if there is one, otherwise create a network.  Until
      * Thread is running the border routing manager has nothing to advertise
      * and the backbone stays silent. */
+    otInstance *ot = esp_openthread_get_instance();
     otOperationalDatasetTlvs dataset;
-    otError oterr = otDatasetGetActiveTlvs(esp_openthread_get_instance(), &dataset);
+    const char *how = "resumed from NVS";
+    otError oterr = otDatasetGetActiveTlvs(ot, &dataset);
+
+    if (oterr != OT_ERROR_NONE) {
+        /* No network yet.  Make a RANDOM one -- do not let auto_start(NULL) do
+         * it.
+         *
+         * That path looks like it creates a fresh network, and it starts out
+         * that way: it calls otDatasetCreateNewNetwork() and then overwrites
+         * every value that makes the network distinct with the compiled
+         * CONFIG_OPENTHREAD_NETWORK_* defaults -- channel, PAN ID, extended PAN
+         * ID, name, PSKc, and the NETWORK KEY.  Every stick flashed from the
+         * same tree therefore came up on the same network with the same key.
+         * Two of them within radio range merged into one Thread network; on
+         * separate LAN segments that also produced a one-way path, because the
+         * on-link prefix is derived from the extended PAN ID (fd + 5 bytes of
+         * it) and so was identical too.  Randomising the dataset fixes the
+         * prefix along with everything else.
+         *
+         * A stick that already has a dataset in NVS never reaches this -- an
+         * installed border router keeps its network across updates.
+         */
+        otOperationalDataset fresh;
+        oterr = otDatasetCreateNewNetwork(ot, &fresh);
+        if (oterr == OT_ERROR_NONE) {
+            /* Name it after the chip, so two sticks on a bench are told apart
+             * at a glance.  ESP_MAC_BASE, not esp_efuse_mac_get_default(),
+             * which hands back the middle of the EUI-64 on this family. */
+            uint8_t mac[6];
+            if (esp_read_mac(mac, ESP_MAC_BASE) == ESP_OK) {
+                snprintf(fresh.mNetworkName.m8, sizeof(fresh.mNetworkName.m8),
+                         "THBR-%02X%02X%02X", mac[3], mac[4], mac[5]);
+                fresh.mComponents.mIsNetworkNamePresent = true;
+            }
+            otDatasetConvertToTlvs(&fresh, &dataset);
+            how = "created, random and unique to this chip";
+        } else {
+            ESP_LOGE(TAG, "otDatasetCreateNewNetwork failed (%d) — falling back "
+                          "to the built-in defaults, which every THBR shares",
+                     oterr);
+            how = "created from the shared built-in defaults";
+        }
+    }
+
     err = esp_openthread_auto_start((oterr == OT_ERROR_NONE) ? &dataset : NULL);
-    ESP_LOGI(TAG, "thread network %s: %s",
-             (oterr == OT_ERROR_NONE) ? "resumed from NVS" : "created",
-             esp_err_to_name(err));
+    ESP_LOGI(TAG, "thread network %s: %s", how, esp_err_to_name(err));
 
     /* Name the network, but do not print its key.
      *

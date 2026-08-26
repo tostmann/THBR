@@ -4,6 +4,29 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.36
+
+**Firmware 0.1.44** — every stick brings up its own Thread network.
+
+- **A new stick no longer joins the one next door.** With no dataset in
+  storage the firmware came up on the network compiled into it, and so did
+  every other stick built from the same sources: same name, same PAN ID, same
+  extended PAN ID, same network key. Two of them within radio range merged into
+  a single Thread network, and on separate LAN segments the path between them
+  worked in one direction only, because the on-link prefix is derived from the
+  extended PAN ID and was identical as well.
+- **What it does instead.** On its first start a stick now generates its own
+  network — channel, PAN ID, extended PAN ID, mesh-local prefix, commissioner
+  key and network key are random, and the name carries the last three bytes of
+  the chip's MAC address, so two of them on a desk are told apart at a glance.
+  The on-link prefix follows the extended PAN ID and is therefore unique too.
+- **Nothing changes for a border router already in service.** The new path is
+  only taken when there is no network in storage; an installed stick keeps its
+  network, its key and its devices across the update, as it did before.
+- Measured with two sticks side by side, the second flashed with its storage
+  erased while the first was on the air: it formed its own network rather than
+  joining, kept it across a restart, and left the other one untouched.
+
 ## 2026.8.35
 
 **Firmware 0.1.43** — the network key stops travelling in the log.
