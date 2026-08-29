@@ -4,6 +4,38 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.8.41
+
+Firmware 0.1.50. A border router that changes networks could stop answering on
+its own address. The cause is fixed in the firmware; two host-side layers keep
+the path open should it ever be reached again.
+
+- **The stick's backbone address follows the on-link prefix.** The address that
+  makes that prefix on-link for the stick was set once, at start-up — but the
+  prefix is derived from the network's ExtPanId, so after a network change the
+  address stayed in the old one. The border router then never resolved this
+  host's address in the new prefix, and its replies had nowhere to go: packets
+  reached it, every check on the link said fine, and its own address into the
+  mesh stayed silent. It is kept in step now, and a prefix change moves it.
+  Five network changes on the bench, reachable every time, against two of five
+  staying silent before.
+- **The border router's neighbour entry for this host is kept alive.** A
+  neighbour solicitation every ten seconds, sent from the address the kernel
+  would choose for the mesh. It has to be that packet: only neighbour discovery
+  carries the source link-layer address a neighbour may be learned from, which
+  is why pinging the mesh never healed this and rebuilding the link did.
+- **A wedged backbone link is rebuilt before the stick is restarted.**
+  Restarting the chip takes the mesh down for twenty seconds for every device
+  on it; rebuilding the link clears the same state in eight, with the chip
+  never restarting. That is now what the second failed check spends, and it is
+  verified up to three times before a restart is considered at all.
+- **`tools/adopt_dataset.sh` never leaves a stick with Thread switched off.**
+  The dataset write ran past its timeout, `set -e` took the script down before
+  Thread was switched back on, and the stick sat there disabled — the worst
+  outcome a migration tool has. The enable now runs from an EXIT trap on every
+  path out, and the write gets ninety seconds, because it crosses a serial
+  backbone and was measured taking longer than fifteen.
+
 ## 2026.8.40
 
 Firmware unchanged at 0.1.46. Nothing changes on a running installation; this

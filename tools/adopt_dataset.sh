@@ -40,18 +40,36 @@ printf '\n'
 
 START=$(date +%s)
 
+# Once Thread is stopped, it MUST be started again on every path out of this
+# script.  Twice on 2026-08-27 the dataset write ran past its timeout, set -e
+# took the script down before the enable, and the stick sat there with Thread
+# disabled -- a border router that is not merely unmigrated but off, which is
+# the worst outcome this script has.  A trap is cheap insurance.
+started=0
+restart_thread() {
+    [ "$started" = 1 ] && return
+    curl -fsS --max-time 20 -X PUT -H "Content-Type: application/json" \
+         --data '"enable"' "http://$BR/node/state" >/dev/null 2>&1 \
+        && say "Thread started again" \
+        || say "WARNING could not start Thread -- do it by hand: PUT \"enable\" to /node/state"
+}
+trap restart_thread EXIT
+
 say "stopping Thread"
 curl -fsS --max-time 10 -X PUT -H "Content-Type: application/json" \
      --data '"disable"' "http://$BR/node/state" >/dev/null
 sleep 2
 
+# 15 s was not enough: the write goes over a serial backbone and was measured
+# taking longer, which is how the two incidents above started.
 say "writing the dataset"
-curl -fsS --max-time 15 -X PUT -H "Content-Type: text/plain" \
+curl -fsS --max-time 90 -X PUT -H "Content-Type: text/plain" \
      --data "$DS" "http://$BR/node/dataset/active" >/dev/null
 
 say "starting Thread"
-curl -fsS --max-time 10 -X PUT -H "Content-Type: application/json" \
+curl -fsS --max-time 20 -X PUT -H "Content-Type: application/json" \
      --data '"enable"' "http://$BR/node/state" >/dev/null
+started=1
 
 for _ in $(seq 1 60); do
     s=$(state || true)

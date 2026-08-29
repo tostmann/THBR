@@ -517,6 +517,10 @@ def adopt_port():
 
 
 PUMP_STARTED = 0.0
+LAST_PREFIXES = None        # the (omr, on-link) pair last seen from the stick
+PREFIX_CHANGED_AT = 0.0     # when that pair last changed under a running pump
+LAST_LL = None              # the border router's link-local, for the keepalive
+NS_WARNED = False           # so a broken keepalive says so once, not every 30 s
 
 
 def start_pump():
@@ -576,13 +580,8 @@ def ensure_backbone_routing():
     reason.  The firmware reports the prefixes it advertises, so rather than
     fail quietly we install what is missing and say that we did.
     """
+    global LAST_PREFIXES, PREFIX_CHANGED_AT, LAST_LL
     tap = ENV["tap"]
-    # Give the kernel first refusal.  Where the sysctls could be set it learns
-    # all of this from the router advertisement, with the lifetimes the border
-    # router intends — better than anything we can staple on.  Only once that
-    # has demonstrably not happened do we step in.
-    if time.time() - PUMP_STARTED < ROUTE_GRACE_S:
-        return
     try:
         bb = http_json(f"http://{ENV['stick']}:{ENV['info_port']}/backbone")
     except (urllib.error.URLError, OSError, ValueError):
@@ -590,6 +589,35 @@ def ensure_backbone_routing():
     omr, onlink, ll = bb.get("omr_prefix"), bb.get("onlink_prefix"), bb.get("ll")
     if not omr or not ll:
         return          # border router has not published its prefixes yet
+
+    # A new Thread network can change both prefixes under a container that keeps
+    # running.  Solicit a router advertisement so the kernel installs address
+    # and route itself, with the lifetimes the border router intends — measured
+    # on the bench: proto kernel_ra and proto ra afterwards, where it used to be
+    # a hand-stacked proto static, and then step back for as long as a pump
+    # start steps back.
+    #
+    # This is host hygiene only.  It does NOT fix the border router falling
+    # silent on its own OMR address after a network change: that was the
+    # hypothesis behind this code and the bench refuted it (13 minutes silent
+    # with the advertisement in place).
+    seen = (omr, onlink)
+    if LAST_PREFIXES is not None and seen != LAST_PREFIXES:
+        PREFIX_CHANGED_AT = time.time()
+        log(f"the border router now advertises {omr} (on-link {onlink}), was "
+            f"{LAST_PREFIXES[0]} (on-link {LAST_PREFIXES[1]}) — soliciting a router "
+            f"advertisement and leaving the next {ROUTE_GRACE_S:.0f}s to the kernel")
+        send_rs()
+    LAST_PREFIXES = seen
+    LAST_LL = ll
+
+    # Give the kernel first refusal.  Where the sysctls could be set it learns
+    # all of this from the router advertisement, with the lifetimes the border
+    # router intends — better than anything we can staple on.  Only once that
+    # has demonstrably not happened do we step in.
+    now = time.time()
+    if now - PUMP_STARTED < ROUTE_GRACE_S or now - PREFIX_CHANGED_AT < ROUTE_GRACE_S:
+        return
 
     # 1. an address inside the on-link prefix, so replies from the mesh find
     #    their way back (this is what SLAAC would have given us)
@@ -752,6 +780,69 @@ def send_rs():
         s.close()
     except OSError as e:
         log(f"could not send router solicitation on {tap}: {e}")
+
+
+def solicited_node(addr):
+    """The solicited-node multicast address a neighbour solicitation for `addr`
+    is sent to: ff02::1:ff plus the low 24 bits of the target."""
+    low = int(ipaddress.IPv6Address(addr)) & 0xFFFFFF
+    return ipaddress.IPv6Address(int(ipaddress.IPv6Address("ff02::1:ff00:0")) | low)
+
+
+def send_ns_keepalive():
+    """Keep the border router's neighbour entry for this host alive.
+
+    Measured on the bench: after a network change the border router advertises a
+    new on-link prefix but gives itself no address in it and never resolves the
+    host address there -- it never sends a single neighbour solicitation for it.
+    It answers only while it holds an entry it picked up passively, and that
+    entry ages out again within seconds.  Everything above IP then looks broken
+    in one direction only: packets reach the border router, its replies have
+    nowhere to go.
+
+    A neighbour solicitation is the packet that fixes this, and it has to be
+    one: only a neighbour discovery message carries the source link-layer
+    address option a neighbour may be learned from (RFC 4861, 4.3).  An echo
+    request does not, which is why pinging the mesh never healed it and a pump
+    restart did -- the restart makes the kernel send exactly this.
+
+    Sent from the address the kernel would choose for the mesh, so the entry
+    kept alive is the one the traffic actually needs.
+    """
+    global NS_WARNED
+    tap, ll, prefixes = ENV["tap"], LAST_LL, LAST_PREFIXES
+    if not ll or not prefixes or not prefixes[0]:
+        return
+    try:
+        target = ipaddress.IPv6Address(str(ll).strip())
+        # Ask for the route INTO THE MESH, not for the border router's own
+        # link-local: the source has to be the address mesh traffic will carry,
+        # and asking about a link-local destination only ever answers with our
+        # link-local, which teaches the border router nothing it needs.
+        probe = ipaddress.IPv6Network(prefixes[0], strict=False).network_address
+        rc, out = run_ip(["-6", "route", "get", str(probe)])
+        toks = out.split()
+        src = toks[toks.index("src") + 1] if "src" in toks else None
+        if rc != 0 or not src or ipaddress.IPv6Address(src).is_link_local:
+            return
+        with open(f"/sys/class/net/{tap}/address") as fh:
+            mac = bytes(int(x, 16) for x in fh.read().strip().split(":"))
+        idx = socket.if_nametoindex(tap)
+        pkt = (struct.pack("!BBHI", 135, 0, 0, 0)      # NS, checksum by kernel
+               + target.packed
+               + struct.pack("!BB", 1, 1) + mac)       # source link-layer addr
+        s = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6)
+        s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 255)
+        s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_IF,
+                     struct.pack("I", idx))
+        s.bind((src, 0))
+        s.sendto(pkt, (str(solicited_node(target)), 0, 0, idx))
+        s.close()
+        NS_WARNED = False
+    except (OSError, ValueError, IndexError) as e:
+        if not NS_WARNED:
+            NS_WARNED = True
+            log(f"could not send the neighbour keepalive on {tap}: {e}")
 
 
 def after_pump_start():
@@ -1531,6 +1622,7 @@ def cmd_run():
     # First reachability report soon after start, then every five minutes.
     last_check_reach = time.time() - 240
     unreachable = 0
+    last_keepalive = 0.0
     while not stopping:
         time.sleep(1.0)
         if pump.poll() is not None:
@@ -1608,11 +1700,43 @@ def cmd_run():
         if time.time() - last_check >= 15:
             last_check = time.time()
             ensure_backbone_routing()
+        # Often enough that the entry cannot age out between two of them: the
+        # shortest life measured on the bench was about ten seconds.
+        if time.time() - last_keepalive >= 10:
+            last_keepalive = time.time()
+            send_ns_keepalive()
         if time.time() - last_check_reach >= 300:
             last_check_reach = time.time()
-            if verify_mesh_reachable() is False:
+            reachable = verify_mesh_reachable()
+            if reachable is False:
                 unreachable += 1
-                if unreachable >= 3:
+                # A Thread network change can leave the border router silent on
+                # its own OMR address while it still reports br=running, and
+                # rebuilding the backbone link clears that: measured 8-14 s,
+                # with the chip never restarting and the mesh never going down.
+                # A restart costs every child on the network some 20 s, so spend
+                # the cheap remedy first and keep the restart for the case it
+                # does not answer to.
+                if unreachable == 2:
+                    log("mesh unreachable twice — rebuilding the backbone link "
+                        "before asking the stick to restart")
+                    stop_pump(pump)
+                    wait_for_device(ENV["device"], 60)
+                    pump = start_pump()
+                    after_pump_start()
+                    # The link is back before the mesh is: 8 s in the fastest
+                    # measurement, 14 s in the slowest.  Ask more than once —
+                    # judged on a single early try, a slow recovery reads as a
+                    # failed one, and the next missed check would then go
+                    # straight to restarting the chip although this worked.
+                    for attempt in range(3):
+                        if attempt:
+                            time.sleep(8)
+                        if verify_mesh_reachable():
+                            unreachable = 0
+                            break
+                    last_check_reach = time.time()
+                elif unreachable >= 3:
                     unreachable = 0
                     if reboot_stick():
                         time.sleep(20)
@@ -1620,8 +1744,12 @@ def cmd_run():
                         stop_pump(pump)
                         pump = start_pump()
                         after_pump_start()
-            else:
+            elif reachable:
                 unreachable = 0
+            # reachable is None: nothing could be measured — the stick did not
+            # answer, or it named no address to aim at.  That is not evidence
+            # of health, so leave the counter where it is rather than let an
+            # unanswered check undo a real one.
         if not identity_seen and time.time() - last_identity >= 60:
             last_identity = time.time()
             identity_seen = check_identity()

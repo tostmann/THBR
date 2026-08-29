@@ -95,6 +95,131 @@ static void banner(void)
 #if CONFIG_THBR_ENABLE_BORDER_ROUTER
 /* Wait for the backbone to carry IP, then start the border-router role bound
  * to it.  Own task: the link wait blocks. */
+/* Say what state each Thread address is in.
+ *
+ * Being ON the netif is not the same as being usable: lwIP will not answer for
+ * an address that is still tentative (DAD unfinished) or invalid, and it drops
+ * such packets in silence.  So report the STATE, not just the presence, and
+ * only when it changes.
+ *
+ * This used to also MIRROR the OpenThread addresses onto the netif, on the
+ * theory that a missing one explained a border router that would not answer on
+ * its own OMR address.  It never added a single address in any measurement,
+ * and 2026-08-27 found the real cause elsewhere (see
+ * sync_backbone_onlink_address).  The reporting stays because it is what
+ * distinguishes "the address is missing" from "the address is tentative", and
+ * both look identical from the host.
+ */
+static void log_thread_addr_states(void)
+{
+    static uint32_t last_fingerprint;
+    uint32_t fingerprint = 0;
+    char states[160];
+    int used = 0;
+    for (struct netif *nif = netif_list; nif != NULL; nif = nif->next) {
+        if (nif->name[0] != 'o' || nif->name[1] != 't') {
+            continue;
+        }
+        for (int i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
+            u8_t st = netif_ip6_addr_state(nif, i);
+            if (st == IP6_ADDR_INVALID) {
+                continue;
+            }
+            const ip6_addr_t *ia = netif_ip6_addr(nif, i);
+            fingerprint = fingerprint * 31u + (uint32_t)st + (ia->addr[0] ^ ia->addr[3]);
+            const char *what = ip6_addr_istentative(st) ? "tentative"
+                             : ip6_addr_ispreferred(st) ? "preferred"
+                             : ip6_addr_isdeprecated(st) ? "deprecated" : "?";
+            used += snprintf(states + used, sizeof(states) - used, "%s%04x:%04x %s",
+                             used ? ", " : "",
+                             (unsigned)(lwip_ntohl(ia->addr[0]) >> 16),
+                             (unsigned)(lwip_ntohl(ia->addr[3]) & 0xffff), what);
+            if (used >= (int)sizeof(states) - 24) {
+                break;
+            }
+        }
+    }
+    if (fingerprint != last_fingerprint) {
+        last_fingerprint = fingerprint;
+        ESP_LOGW(TAG, "thread netif addresses: %s", used ? states : "none");
+    }
+}
+
+
+/* Hold an address out of the on-link prefix the routing manager advertises on
+ * the backbone -- and keep it in step when that prefix changes.
+ *
+ * WHY an address at all: traffic from the mesh towards the infrastructure was
+ * dropped -- nothing reached the host, while mesh-internal pings worked.  lwIP
+ * cannot know the on-link prefix is reachable over the backbone: the border
+ * router advertises it but holds no address in it, so ip6_route() finds no
+ * interface and the forwarded packet dies.  Owning an address in the prefix
+ * makes it on-link for lwIP.
+ *
+ * WHY REPEATEDLY, since 0.1.50: the on-link prefix is derived from the
+ * extended PAN ID, so it changes with every Thread network the stick joins or
+ * creates -- and this ran once, in a start-up task.  After a network change
+ * the stick kept its address in the OLD prefix, leaving the new one not
+ * on-link: it then never sent a neighbour solicitation for a host address in
+ * the very prefix it was advertising, and its replies were dropped for want of
+ * a route.  Measured 2026-08-27 with tcpdump on the host: pings to the border
+ * router's OMR address were silent from a source in the new prefix and
+ * answered in 1.1 ms from a source in the old one, in the same second.  The
+ * failure is one-directional and invisible from the stick -- br=running, route
+ * in place, and the mesh unreachable.
+ *
+ * MUST run with the OpenThread lock RELEASED: esp_netif_add_ip6_address()
+ * dispatches to the TCP/IP thread and waits for it, and that thread takes the
+ * OpenThread lock -- holding it here deadlocks the whole stack (the device
+ * stopped answering even ARP; measured 2026-08-20).
+ */
+static void sync_backbone_onlink_address(void)
+{
+    static bool s_have;
+    static esp_ip6_addr_t s_addr;
+
+    otIp6Prefix onlink;
+    esp_openthread_lock_acquire(portMAX_DELAY);
+    bool have_onlink =
+        (otBorderRoutingGetOnLinkPrefix(esp_openthread_get_instance(), &onlink) == OT_ERROR_NONE);
+    esp_openthread_lock_release();
+    if (!have_onlink) {
+        return;
+    }
+
+    esp_ip6_addr_t addr = {0};
+    memcpy(addr.addr, onlink.mPrefix.mFields.m8, 8);          /* prefix /64 */
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_BASE);
+    uint8_t *iid = ((uint8_t *)addr.addr) + 8;                /* modified EUI-64 */
+    iid[0] = (uint8_t)((mac[0] | 0x02) & 0xFE);
+    iid[1] = mac[1]; iid[2] = mac[2];
+    iid[3] = 0xff;   iid[4] = 0xfe;
+    iid[5] = mac[3]; iid[6] = mac[4]; iid[7] = mac[5];
+
+    if (s_have && memcmp(s_addr.addr, addr.addr, 16) == 0) {
+        return;                                               /* nothing changed */
+    }
+
+    if (s_have) {
+        /* The old one has to go, or the stick answers on a prefix it no longer
+         * advertises and the host keeps a route to something nobody serves. */
+        esp_err_t rerr = esp_netif_remove_ip6_address(backbone_netif(), &s_addr);
+        ESP_LOGW(TAG, "on-link prefix changed — dropped backbone address "
+                      IPV6STR " (%s)", IPV62STR(s_addr), esp_err_to_name(rerr));
+        s_have = false;
+    }
+
+    esp_err_t aerr = esp_netif_add_ip6_address(backbone_netif(), addr, true);
+    ESP_LOGI(TAG, "backbone on-link addr " IPV6STR " -> %s",
+             IPV62STR(addr), esp_err_to_name(aerr));
+    if (aerr == ESP_OK) {
+        s_addr = addr;
+        s_have = true;
+    }
+}
+
+
 static void border_router_init_task(void *ctx)
 {
     (void)ctx;
@@ -236,46 +361,9 @@ static void border_router_init_task(void *ctx)
              netif_idx, infra_idx,
              (netif_idx == infra_idx) ? "" : "  <-- MISMATCH (library disagrees)",
              (int)ierr, (int)otBorderRoutingGetState(esp_openthread_get_instance()));
-    otIp6Prefix onlink;
-    bool have_onlink =
-        (otBorderRoutingGetOnLinkPrefix(esp_openthread_get_instance(), &onlink) == OT_ERROR_NONE);
     esp_openthread_lock_release();
 
-    /* Give the backbone an address out of the on-link prefix the routing
-     * manager advertises there.
-     *
-     * WHY: traffic from the mesh towards the infrastructure was dropped —
-     * nothing reached the host, while mesh-internal pings worked.  The
-     * suspicion is that lwIP cannot know the on-link prefix is reachable over
-     * the backbone: the border router advertises it but holds no address in
-     * it, so ip6_route() finds no interface and the forwarded packet dies.
-     * Owning an address in the prefix makes it on-link for lwIP.
-     *
-     * MUST run with the OpenThread lock RELEASED: esp_netif_add_ip6_address()
-     * dispatches to the TCP/IP thread and waits for it, and that thread takes
-     * the OpenThread lock — holding it here deadlocks the whole stack (the
-     * device stopped answering even ARP; measured 2026-08-20). */
-    if (have_onlink) {
-        esp_ip6_addr_t addr = {0};
-        memcpy(addr.addr, onlink.mPrefix.mFields.m8, 8);      /* prefix /64 */
-        uint8_t mac[6];
-        esp_read_mac(mac, ESP_MAC_BASE);
-        uint8_t *iid = ((uint8_t *)addr.addr) + 8;            /* modified EUI-64 */
-        iid[0] = (uint8_t)((mac[0] | 0x02) & 0xFE);
-        iid[1] = mac[1]; iid[2] = mac[2];
-        iid[3] = 0xff;   iid[4] = 0xfe;
-        iid[5] = mac[3]; iid[6] = mac[4]; iid[7] = mac[5];
-
-        esp_err_t aerr = esp_netif_add_ip6_address(backbone_netif(), addr, true);
-        const uint8_t *b = (const uint8_t *)addr.addr;
-        ESP_LOGI(TAG, "backbone on-link addr %02x%02x:%02x%02x:%02x%02x:%02x%02x:"
-                      "%02x%02x:%02x%02x:%02x%02x:%02x%02x -> %s",
-                 b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],
-                 b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15],
-                 esp_err_to_name(aerr));
-    } else {
-        ESP_LOGW(TAG, "no on-link prefix from the routing manager yet");
-    }
+    sync_backbone_onlink_address();
 
     /* ot-br-posix-compatible REST API (+ web GUI) on port 80.  This is what
      * turns "Home Assistant can see the router" into "Home Assistant can use
@@ -488,6 +576,20 @@ void app_main(void)
             bool changed = (brs != last_brs) || (r != last_role) || (link_now != last_link);
             last_brs = brs; last_role = r; last_link = link_now;
             say = changed || ((++beat % 6) == 0);
+            /* Every beat, not once: the OMR address does not exist yet when
+             * the routing manager first reports RUNNING -- it appears when the
+             * prefix is published, which is later, and a one-shot check ran
+             * before it and reported nothing missing.  The comparison is a
+             * handful of memcmp against at most five netif addresses, so the
+             * cheapest correct answer is to keep asking.  It only says
+             * something when it finds something. */
+            if (brs == OT_BORDER_ROUTING_STATE_RUNNING) {
+                /* Every beat, not once: the prefix can change under a running
+                 * border router, and an address left in the previous one takes
+                 * the mesh with it. */
+                sync_backbone_onlink_address();
+                log_thread_addr_states();
+            }
         }
         if (say)
         ESP_LOGI(TAG, "alive: link=%s heap=%" PRIu32 " br=%s role=%s infra_idx=%d",
