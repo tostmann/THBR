@@ -40,6 +40,13 @@ Home Assistant. Both are built from the same directory.
   Home Assistant backups carry. Restoring it onto a replacement stick moves the
   network to new hardware without re-commissioning a single device.
 
+![The mesh graph on that page: seventeen routers and one child](images/topology.png)
+
+The graph is the fastest answer to "is the mesh healthy?": every mains-powered
+device is a router and carries traffic for the rest, line weight is the link
+quality between two of them, a dashed line is a child hanging off its parent,
+and the ring marks the leader.
+
 ## Requirements
 
 - An ESP32-C6 with 4 MB flash, connected by its **native USB port**
