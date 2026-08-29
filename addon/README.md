@@ -166,8 +166,10 @@ Leave it empty on a host that has its own Bluetooth adapter. Before firmware
 0.1.46 that was only half possible — the forwarder stopped, but the stick went
 on dialling a port nobody served, once a minute for the life of the device.
 Now the container writes the setting to the stick, which drops the whole
-Bluetooth stack when nothing is configured. The setting needs firmware 0.1.46;
-an older stick says so in the log, and the add-on brings the firmware with it.
+Bluetooth stack when nothing is configured. That is not tidiness for its own
+sake: measured on a live installation, the stick came back with 229 KB of free
+heap instead of 167 KB. The setting needs firmware 0.1.46; an older stick says
+so in the log, and the add-on brings the firmware with it.
 
 The setting lives on the stick and survives updates. It takes effect at the
 next restart of the stick, not immediately: a border router should not restart
