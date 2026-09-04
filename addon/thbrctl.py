@@ -704,6 +704,33 @@ def ensure_backbone_routing():
             f"the route from the router advertisement (accept_ra_rt_info_max_plen)")
 
 
+# The mesh address the reachability check pings, remembered between checks.
+# Finding it costs a /diagnostics walk of the whole mesh; the address itself
+# changes only when the router re-forms its OMR prefix, so the walk is
+# repeated only when the remembered address stops answering or the prefix it
+# came from is gone.
+MESH_TARGET = {"addr": None, "prefix": None}
+
+# The firmware caps a diagnostic collection at 30 s (DIAG_MAX_TIMEOUT_MS).  A
+# client that gives up sooner leaves the stick finishing the collection for a
+# reader that is gone -- and on a 13-router mesh the collection regularly
+# takes longer than the 15 s this used to wait.  Waiting past the firmware's
+# own limit costs the supervisor nothing it was not already prepared to lose.
+DIAG_WAIT_S = 45.0
+
+
+def _find_mesh_target(net):
+    nodes = http_json(f"http://{ENV['stick']}/diagnostics", timeout=DIAG_WAIT_S)
+    for node in nodes if isinstance(nodes, list) else []:
+        for a in node.get("IP6AddressList", []):
+            try:
+                if ipaddress.IPv6Address(a) in net:
+                    return a
+            except ValueError:
+                continue
+    return None
+
+
 def verify_mesh_reachable():
     """Ping something inside the mesh, so the log says whether the route works
     rather than only that it exists.  The border router's own address in the
@@ -716,24 +743,20 @@ def verify_mesh_reachable():
         if not omr:
             return
         net = ipaddress.IPv6Network(omr, strict=False)
-        nodes = http_json(f"http://{ENV['stick']}/diagnostics", timeout=15.0)
+        target = MESH_TARGET["addr"] if MESH_TARGET["prefix"] == omr else None
+        if not target:
+            target = _find_mesh_target(net)
+            MESH_TARGET.update(addr=target, prefix=omr)
     except (urllib.error.URLError, OSError, ValueError):
         return
-    target = None
-    for node in nodes if isinstance(nodes, list) else []:
-        for a in node.get("IP6AddressList", []):
-            try:
-                if ipaddress.IPv6Address(a) in net:
-                    target = a
-                    break
-            except ValueError:
-                continue
-        if target:
-            break
     if not target:
         return
     proc = subprocess.run(["ping", "-6", "-c", "2", "-W", "3", target],
                           capture_output=True, text=True)
+    if proc.returncode != 0:
+        # Forget the address so the next check walks the mesh again: the
+        # router may simply have a new one.
+        MESH_TARGET["addr"] = None
     if proc.returncode == 0:
         rtt = ""
         for line in proc.stdout.splitlines():

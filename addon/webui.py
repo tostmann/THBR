@@ -553,7 +553,9 @@ def mesh_details(stick):
     except (urllib.error.URLError, OSError, ValueError):
         pass
     try:
-        diag = json.loads(_get(f"http://{stick}/diagnostics", timeout=15))
+        # Past the firmware's own 30 s collection cap: a reader that gives up
+        # earlier leaves the stick finishing a walk nobody will read.
+        diag = json.loads(_get(f"http://{stick}/diagnostics", timeout=45))
         CTX["graph"] = mesh_graph(diag if isinstance(diag, list) else [])
         omr_pfx = CTX.get("omr_prefix", "")
         for d in diag if isinstance(diag, list) else []:
@@ -652,6 +654,10 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 return self._send(404, b"", "image/png")
         if path == "api/status":
+            # The page polls this every five seconds while it is open.  The
+            # refresher below reads the stamp to know whether anyone is
+            # looking, and stops walking the mesh when nobody is.
+            CTX["page_asked"] = time.time()
             return self._send(200, json.dumps(collect_status()))
         if path == "api/backup/download":
             q = urllib.parse.parse_qs(self.path.split("?", 1)[-1])
@@ -731,16 +737,41 @@ class Handler(BaseHTTPRequestHandler):
         self._send(404, json.dumps({"message": "not found"}))
 
 
+# How long after the last page poll the mesh is still walked for it, and how
+# often it is walked with nobody watching.
+PAGE_WATCH_S = 60
+REFRESH_WATCHED_S = 20
+REFRESH_IDLE_S = 900
+
+
 def _refresher():
-    """Keep the expensive numbers fresh in the background."""
+    """Keep the expensive numbers fresh in the background -- but only as fresh
+    as someone is looking.
+
+    Until 2026-09-05 this walked the mesh every 20 s around the clock, page
+    open or not: a /diagnostics request is a network-diagnostic GET to every
+    router over the air and, on the stick, one malloc per TLV per router held
+    until the answer is serialised -- measured on a 13-router installation as
+    a 24 KB / 184-block burst every 20 s, 4300 times a day, for a page nobody
+    had open.  That burst is what fragments the router's heap (the largest
+    free block shrinks in 4 KB steps while the total does not), and every
+    walk that overruns the client's timeout leaves the stick finishing a
+    collection whose reader is gone.  The page polls /api/status every five
+    seconds while open, so that stamp says whether the walk has a reader.
+    """
+    last = 0.0
     while True:
-        try:
-            info, nodes = mesh_details(CTX["env"].get("stick", ""))
-            if info or nodes:
-                CTX["mesh_info"], CTX["nodes"] = info, nodes
-        except Exception:                                    # noqa: BLE001
-            pass
-        time.sleep(20)
+        watched = time.time() - CTX.get("page_asked", 0.0) < PAGE_WATCH_S
+        due = REFRESH_WATCHED_S if watched else REFRESH_IDLE_S
+        if time.time() - last >= due:
+            last = time.time()
+            try:
+                info, nodes = mesh_details(CTX["env"].get("stick", ""))
+                if info or nodes:
+                    CTX["mesh_info"], CTX["nodes"] = info, nodes
+            except Exception:                                # noqa: BLE001
+                pass
+        time.sleep(5)
 
 
 def start(env, req_file, res_file, log_path, bundled, port, allow="ingress",

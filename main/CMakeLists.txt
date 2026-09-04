@@ -7,7 +7,7 @@ endif()
 
 idf_component_register(
     SRCS         "thbr_main.c" ${THBR_TRANSPORT_SRC} "log_sink.c" "p2p_netif_glue.c"
-                 "info_server.c" "ble_proxy.c"
+                 "info_server.c" "ble_proxy.c" "heap_probe.c"
     INCLUDE_DIRS "."
     ## openthread   — OT stack, border-router API (prebuilt libopenthread_br.a)
     ## esp_netif    — the PPP backbone netif

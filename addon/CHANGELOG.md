@@ -4,6 +4,41 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.9.42
+
+Firmware 0.1.54. The border router's free heap fell steadily on a large mesh —
+about 20 KB a day on a 13-router installation, down to a few kilobytes left
+after a week — while a small bench mesh stayed flat. Found, fixed, and the
+load that provoked it taken away.
+
+- **A diagnostics reply cut short no longer leaks a router's JSON.** The REST
+  server streams `/diagnostics` one router at a time. When the reader had
+  already gone by the time the separator between two routers went out, the
+  handler returned without freeing the chunk it had just printed: 1.2 to
+  1.5 KB per occurrence on a mesh whose routers each carry a dozen routes.
+  Every step in the router's idle heap matched one such line in its log, six
+  of six. The chunk is freed on every path now, in both handlers, and an
+  empty topology entry no longer leaves a JSON object behind either.
+- **The add-on's page no longer walks the mesh while nobody is looking.** The
+  topology refresh ran every 20 seconds around the clock, page open or not —
+  a network-diagnostic request to every router over the air, and on the stick
+  one allocation per TLV per router held until the answer is serialised:
+  24 KB in 184 blocks every 20 seconds on 13 routers, which is what
+  fragmented the heap. It now runs every 20 seconds while the page is open
+  (the page polls every five) and every 15 minutes otherwise.
+- **The supervisor's mesh check keeps its target.** Finding the address to
+  ping cost a full diagnostics walk every five minutes, with a 15-second
+  timeout against the firmware's own 30-second collection limit — so on a
+  large mesh the reader gave up mid-collection every time, which is exactly
+  the case above. The address is remembered and the walk repeated only when it
+  stops answering; both readers now wait 45 seconds.
+- An investigation build option, `CONFIG_THBR_HEAP_PROBE`, adds a heap census
+  endpoint to the firmware (per region, per task, and a caller trace). Off in
+  the shipping image; it is how the leak was found.
+- `tools/ha_matter_commission.py` takes the dataset TLVs explicitly instead of
+  picking the first dataset Home Assistant holds, and the README shows the
+  mesh graph.
+
 ## 2026.8.41
 
 Firmware 0.1.50. A border router that changes networks could stop answering on

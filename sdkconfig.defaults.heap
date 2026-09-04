@@ -1,0 +1,62 @@
+## Heap-probe overlay — an INVESTIGATION build, never a release.
+##
+## Layered on top of the shipping `ble` variant so that what runs on the
+## border router under investigation differs from the released image in
+## exactly one dimension: the instrumentation.  Everything else — BLE proxy,
+## border router, transport — stays byte-for-byte the shipping configuration,
+## because a build that differs in two places cannot answer a question about
+## either.
+##
+## Cost, measured against the released 0.1.50 image, is recorded in
+## test/heap/README when this build is flashed.
+
+## The census endpoint (GET /heap).  Cheap: reads allocator counters.
+CONFIG_THBR_HEAP_PROBE=y
+
+## Standalone LEAKS-mode tracing, so POST /heap {"trace":"start"} can name the
+## caller that allocated what never came back.  NOTE this instruments EVERY
+## malloc and free even while no trace is running — that overhead is the price
+## of not having to reflash a production border router a second time to turn
+## it on.  The trace itself stays off until asked for; its buffer comes out of
+## the heap under investigation.
+CONFIG_HEAP_TRACING_STANDALONE=y
+
+## Four return addresses per record instead of the default two.  The immediate
+## caller of malloc is usually a wrapper (cJSON, lwIP pbuf, an OT allocator),
+## so two frames often name the allocator rather than the code that leaked.
+## Costs 8 bytes per record on top of the base ~40.
+CONFIG_HEAP_TRACING_STACK_DEPTH=4
+
+## The hash map trades RAM for speed when the record buffer is large.  With a
+## few hundred records the linear scan is fine, and 512 entries * 8 bytes is
+## RAM this stick does not have to spare.
+CONFIG_HEAP_TRACE_HASH_MAP=n
+
+## Two things the first heap build (0.1.52) got wrong, found on 2026-09-04
+## against the flashed image:
+##
+## 1. CONFIG_HEAP_TRACING_STACK_DEPTH=4 above was silently clamped to 0 on
+##    this RISC-V target: IDF's heap Kconfig forces depth 0 unless the CPU
+##    frame pointer is in use (range 0 0 if IDF_TARGET_ARCH_RISCV &&
+##    !ESP_SYSTEM_USE_FRAME_POINTER).  With depth 0 the record has no
+##    alloced_by[] at all and /heap/leaks reported list-pointer garbage as
+##    "callers".  The frame pointer is a choice against NO_BACKTRACE; picking
+##    it costs register s0 in every function -- acceptable in an investigation
+##    build, and the only way this stick can name who allocated what.  The
+##    prebuilt libopenthread_br.a was not built with a frame pointer, so a
+##    chain that enters it ends there; the entry address still names the lib
+##    function through the ELF's symbol table.
+CONFIG_ESP_SYSTEM_USE_FRAME_POINTER=y
+
+## 2. Per-task attribution.  The idle-level census on the loaded router showed
+##    a handful of ~1.2 KB blocks and a few dozen ~130 B ones arriving per
+##    day, without saying whose.  Task tracking tags every block with the
+##    allocating task, so GET /heap can split the totals into ot_main, tiT
+##    (lwIP), mdns, httpd, ... -- one number per suspect, cheap enough to
+##    sample every five minutes.  Costs one pointer per allocated block.
+CONFIG_HEAP_TASK_TRACKING=y
+
+## Task handles alone do not name a task; the trace facility provides the
+## handle->name table (uxTaskGetSystemState) that /heap uses to label the
+## per-task totals.  Off in the shipping build, on here.
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y

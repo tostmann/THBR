@@ -16,7 +16,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 BUILD="${THBR_BUILD_DIR:-/tmp/thbr_idf_build}"
-OUT="$ROOT/addon/firmware"
+# THBR_DIST_DIR redirects the bundle somewhere else.  An investigation build
+# must never land in addon/firmware/ — that directory IS what the released
+# container ships, and a bundle written there is one `docker build` away from
+# going out to users.
+OUT="${THBR_DIST_DIR:-$ROOT/addon/firmware}"
 
 python3 - "$ROOT" "$BUILD" "$OUT" <<'PY'
 import hashlib, json, os, re, sys

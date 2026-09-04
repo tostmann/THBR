@@ -16,6 +16,7 @@
 #include "sdkconfig.h"
 
 #include "backbone.h"
+#include "heap_probe.h"
 #include "version.h"
 
 #if CONFIG_THBR_ENABLE_BORDER_ROUTER
@@ -260,8 +261,18 @@ esp_err_t info_server_start(void)
      * afterwards.  Adding /ble_proxy without raising this cost /backbone and
      * /reboot exactly that way, which would have taken the host's route into
      * the mesh with it on any system that cannot learn it from a router
-     * advertisement.  Count the registrations below before changing this. */
+     * advertisement.  Count the registrations below before changing this.
+     * Six are registered here; the heap probe adds three more when it is
+     * compiled in, and it logs an error rather than failing quietly if the
+     * count is ever wrong again. */
+#if CONFIG_THBR_HEAP_PROBE
+    cfg.max_uri_handlers = 11;
+    /* The per-task census walks the task table and the heap on the handler's
+     * stack (about 3 KB of locals); the default 4 KB leaves no margin. */
+    cfg.stack_size = 6144;
+#else
     cfg.max_uri_handlers = 8;
+#endif
     cfg.max_open_sockets = 3;
     cfg.lru_purge_enable = true;
 
@@ -287,6 +298,7 @@ esp_err_t info_server_start(void)
     REG(ble_post_uri);
     REG(backbone_uri);
     REG(reboot_uri);
+    heap_probe_register(s_server);   /* no-op unless CONFIG_THBR_HEAP_PROBE */
     ESP_LOGI(TAG, "info API on port %d: /version /status /backbone /ble_proxy, POST /reboot (fw %s)",
              CONFIG_THBR_INFO_PORT, FW_VERSION_STRING);
     return ESP_OK;

@@ -4,6 +4,7 @@
 /sdkconfig.*.old
 /sdkconfig.c5
 /sdkconfig.ble
+/sdkconfig.heap
 /dependencies.lock
 /managed_components/
 /build/

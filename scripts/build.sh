@@ -42,6 +42,8 @@ stale_check "$ROOT/sdkconfig"     "$ROOT/sdkconfig.defaults"
 stale_check "$ROOT/sdkconfig.ble" "$ROOT/sdkconfig.defaults" "$ROOT/sdkconfig.defaults.br" "$ROOT/sdkconfig.defaults.ble"
 stale_check "$ROOT/sdkconfig.c5"  "$ROOT/sdkconfig.defaults" "$ROOT/sdkconfig.defaults.br" \
                                   "$ROOT/sdkconfig.defaults.ble" "$ROOT/sdkconfig.defaults.c5"
+stale_check "$ROOT/sdkconfig.heap" "$ROOT/sdkconfig.defaults" "$ROOT/sdkconfig.defaults.br" \
+                                  "$ROOT/sdkconfig.defaults.ble" "$ROOT/sdkconfig.defaults.heap"
 
 # 1. Pre-build versioning (snapshot + bump + regenerate main/version.h).
 # Second and further chips of the SAME release: THBR_NO_BUMP=1 holds the build
@@ -86,7 +88,12 @@ case "$VARIANT" in
            export THBR_BUILD_DIR="${THBR_BUILD_DIR:-/root/thbr_idf_build_ble}" ;;
     c5)    OVERLAYS="ble c5"  ; GENERATED="$ROOT/sdkconfig.c5"
            export THBR_BUILD_DIR="${THBR_BUILD_DIR:-/root/thbr_idf_build_c5}" ;;
-    *) echo "unknown THBR_VARIANT '$VARIANT' (plain, ble, c5)" >&2; exit 1 ;;
+    # The shipping C6 build plus heap instrumentation, for the drift
+    # investigation.  Its own generated config and build directory so it can
+    # never be mistaken for, or overwrite, the image that ships.
+    heap)  OVERLAYS="ble heap" ; GENERATED="$ROOT/sdkconfig.heap"
+           export THBR_BUILD_DIR="${THBR_BUILD_DIR:-/root/thbr_idf_build_heap}" ;;
+    *) echo "unknown THBR_VARIANT '$VARIANT' (plain, ble, c5, heap)" >&2; exit 1 ;;
 esac
 
 for o in $OVERLAYS; do

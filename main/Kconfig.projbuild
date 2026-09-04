@@ -102,4 +102,22 @@ menu "THBR — Thread Border Router over serial IP backbone"
             the same port as its control interface, under /ble.  The default
             points at the host on the other end of the backbone.
 
+    config THBR_HEAP_PROBE
+        bool "Heap census endpoint (investigation build, NOT for release)"
+        default n
+        help
+            Adds GET /heap: per-region free/allocated bytes, block counts and
+            the largest free block — the three numbers that tell a leak from
+            fragmentation, which esp_get_free_heap_size() alone cannot.
+
+            With CONFIG_HEAP_TRACING_STANDALONE also enabled, POST /heap
+            {"trace":"start","records":n} runs a LEAKS-mode trace and GET
+            /heap/leaks reports the still-held blocks grouped by the return
+            address that allocated them.  The trace buffer comes out of the
+            heap under investigation (about 40 bytes per record), so it is off
+            until asked for.
+
+            A release build leaves this off: the endpoint exposes allocator
+            internals and the tracing hooks cost time on every malloc.
+
 endmenu
