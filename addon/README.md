@@ -258,10 +258,15 @@ carries the border router's lifetimes.
 ## Building it yourself
 
 ```
-THBR_STAGE=2 scripts/build.sh      # firmware (ESP-IDF, see scripts/idf_env.sh)
-scripts/dist.sh                    # copies the flash images into addon/firmware/
-docker build -t thbr addon/        # plain Docker image
+THBR_STAGE=2 THBR_VARIANT=ble scripts/build.sh                  # C6 firmware (ESP-IDF, see scripts/idf_env.sh)
+THBR_BUILD_DIR=/root/thbr_idf_build_ble scripts/dist.sh          # copies the flash images into addon/firmware/esp32c6/
+THBR_STAGE=2 THBR_VARIANT=c5 THBR_NO_BUMP=1 scripts/build.sh    # C5, same version; dist.sh again with its build dir
+docker build -t thbr addon/                                     # plain Docker image
 ```
+
+`THBR_VARIANT=ble` is what ships; leaving it out builds a smaller image without
+the Bluetooth proxy and says nothing about it. The repository README has the
+layering of the `sdkconfig.defaults.*` files.
 
 The published add-on images are built from this same directory, one per
 architecture, by `scripts/publish_images.sh`; `build.yaml` names the base image

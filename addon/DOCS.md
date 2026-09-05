@@ -270,6 +270,14 @@ Drag any node with the mouse and the rest of the network follows — useful for
 untangling a dense mesh. Positions stay put while the page refreshes; the graph
 is only rebuilt when the network itself changes.
 
+The network is asked for it every 20 seconds while the page is open, and every
+15 minutes when it is not. A walk of the mesh is a diagnostic request to every
+router over the air, and the stick holds all the answers in memory while it
+assembles them — on a mesh of a dozen routers that is a fair share of its free
+memory for a few seconds — so it is not something to do around the clock for a
+page nobody is looking at. Opening the page starts the walks again within
+seconds.
+
 ## Saving the stick's network settings
 
 **Save network settings** reads the stick's NVS partition — the Thread network

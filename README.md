@@ -196,15 +196,22 @@ switches the whole thing off when empty.
 ## Building it yourself
 
 ```
-THBR_STAGE=2 scripts/build.sh      # firmware, with ESP-IDF
-scripts/dist.sh                    # collect the flash images into addon/firmware/<chip>/
-docker build -t thbr addon/        # the container image
+THBR_STAGE=2 THBR_VARIANT=ble scripts/build.sh                  # C6 firmware, the one that ships
+THBR_BUILD_DIR=/root/thbr_idf_build_ble scripts/dist.sh          # file it under addon/firmware/esp32c6/
+THBR_STAGE=2 THBR_VARIANT=c5 THBR_NO_BUMP=1 scripts/build.sh    # C5, same firmware version
+THBR_BUILD_DIR=/root/thbr_idf_build_c5 scripts/dist.sh
+docker build -t thbr addon/                                     # the container image
 ```
 
 `sdkconfig.defaults` is layered: `.br` turns the border router on, `.ble` adds
-the Bluetooth proxy, `.c5` retargets the same sources at an ESP32-C5. Build
-once per chip; `scripts/dist.sh` files each build under its own chip, and the
-add-on picks the one matching the stick in front of it.
+the Bluetooth proxy, `.c5` retargets the same sources at an ESP32-C5. The
+variant is not optional: without `THBR_VARIANT=ble` the build succeeds, comes
+out a third smaller and carries no Bluetooth stack at all, and nothing but the
+file size says so. Build once per chip; `THBR_NO_BUMP=1` keeps the second chip
+on the first one's version number, and `scripts/dist.sh` files each build
+under its own chip, so the add-on picks the one matching the stick in front of
+it. `THBR_VARIANT=heap` is the C6 build plus a heap census endpoint
+(`sdkconfig.defaults.heap`) — an investigation build, never shipped.
 
 Publishing a release builds both architectures natively and pushes them under
 the version in `addon/config.yaml`:

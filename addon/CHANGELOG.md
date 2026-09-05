@@ -4,6 +4,26 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.9.43
+
+Firmware 0.1.56. The follow-up to 2026.9.42: the diagnostics walk no longer
+needs the whole mesh in memory at once.
+
+- **The topology is serialised one router at a time.** The REST server used to
+  build the JSON for every router before sending the first byte — on a
+  16-router mesh about 90 KB of tree on top of the 40 KB of collected
+  answers, measured on a live installation taking the stick's free memory to
+  its last few bytes for a moment. Now each router is converted, its collected
+  answers freed, printed, sent and released before the next one is touched;
+  what the heap holds at any moment is the collected answers plus one
+  router's JSON, around 6 KB. Both endpoints, `/diagnostics` and `/topology`,
+  return exactly what they returned before. Verified against a reader that
+  drops the connection mid-reply: nothing is left behind.
+- The build instructions in both READMEs now name `THBR_VARIANT=ble`, the
+  build that ships. Without it the firmware builds a third smaller, without
+  the Bluetooth stack, and nothing but the file size says so. `DOCS.md`
+  explains when the add-on walks the mesh for the topology graph.
+
 ## 2026.9.42
 
 Firmware 0.1.54. The border router's free heap fell steadily on a large mesh —
