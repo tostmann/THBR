@@ -420,7 +420,20 @@ static bool report_due(const uint8_t *addr, bool with_data)
 static void report_device(const struct ble_gap_disc_desc *d)
 {
     struct ble_hs_adv_fields f;
-    if (ble_hs_adv_parse_fields(&f, d->data, d->length_data) != 0) {
+    size_t payload_len = d->length_data;
+    for (size_t offset = 0; offset < payload_len;) {
+        uint8_t field_len = d->data[offset];
+        if (field_len == 0) {
+            /* A zero-length AD structure marks the end.  Some peripherals
+             * still pad the legacy 31-byte buffer with zeroes; NimBLE treats
+             * those trailing bytes as malformed input. */
+            payload_len = offset;
+            break;
+        }
+        if (field_len >= payload_len - offset) break;
+        offset += (size_t)field_len + 1;
+    }
+    if (ble_hs_adv_parse_fields(&f, d->data, payload_len) != 0) {
         return;
     }
     remember_addr(&d->addr);
