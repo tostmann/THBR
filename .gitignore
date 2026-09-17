@@ -5,6 +5,9 @@
 /sdkconfig.c5
 /sdkconfig.ble
 /sdkconfig.heap
+## Kept out of the published tree: it records the paths of the machine it was
+## resolved on, and it is not what makes a build reproducible — that is the
+## commit `main/idf_component.yml` pins the esp_ot_br_server fork to.
 /dependencies.lock
 /managed_components/
 /build/

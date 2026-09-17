@@ -4,6 +4,47 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.9.44
+
+Firmware 0.1.57. A Bluetooth fix contributed from outside, and a change to how
+the firmware is built, so that the build can be reproduced.
+
+- **Devices that pad their advertisement with zeroes are found.** Some
+  peripherals fill the unused rest of the 31-byte advertising buffer with zero
+  bytes. NimBLE's parser rejects a field whose length is zero as bad data and
+  throws the whole advertisement away with it, so the Bluetooth proxy never
+  reported the device and commissioning could not find it. The proxy now
+  treats the first zero-length field as the end of the data before parsing.
+  Contributed by @Flachzange (#1), who commissioned an ELTAKO ESR64NP-IPM
+  through the proxy with it. Reproduced on the bench with a stand-in that
+  advertises the same shape — 15 bytes of flags and Matter service data, the
+  rest of the buffer zeroes: in 90 seconds the firmware before the fix
+  reported it 76 times and never with its service data, because only the scan
+  response survived parsing; with the fix the service data arrives, 77 times
+  in the same window.
+- **The border router component is pinned to a fork.** The `/diagnostics`
+  handler that 2026.9.43 fixed lives in `esp_ot_br_server`, a dependency
+  resolved at build time — and the fix existed only as a local edit to the
+  resolved copy, which is generated and ignored by git. A fresh checkout, or
+  any re-resolve of the dependency, would have rebuilt the leak without
+  saying a word. `main/idf_component.yml` now pins the dependency to a fork
+  carrying the fix, by commit, so a checkout resolves the component this
+  release was built from. Verified: with the pin, the component
+  resolves byte-identical to the tree 0.1.56 was built from, and the
+  diagnostics functions disassemble to the same instructions as the shipped
+  firmware.
+- The fix has been submitted upstream (espressif/esp-thread-br#219). Once it
+  lands there, the fork can go.
+- `scripts/release_check.sh` now also asks whether the build is still
+  reproducible: whether every git dependency names a version, whether the
+  manifest and the lock agree, whether the fix is still present in the
+  resolved tree, and whether anybody has edited a resolved component by hand.
+- The leak fix was re-verified by aborting `/diagnostics` from the client
+  side 1200 times against the patched build, at four points: before the first
+  byte, after the first chunk, after several chunks, and in the middle of a
+  chunk. The idle heap's allocated block count is unchanged at every one of
+  them, and the HTTP server task retains nothing.
+
 ## 2026.9.43
 
 Firmware 0.1.56. The follow-up to 2026.9.42: the diagnostics walk no longer

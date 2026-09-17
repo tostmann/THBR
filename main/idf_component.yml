@@ -11,9 +11,15 @@ dependencies:
   ## integration import the dataset and commission Matter-over-Thread devices,
   ## rather than merely discovering the router over mDNS.  Lives in the
   ## esp-thread-br SDK, not the registry, hence the git path dependency.
+  ## Pinned to our fork: the upstream /diagnostics handler builds the JSON for
+  ## the whole mesh in the heap before sending, which peaks hard and leaks one
+  ## router's JSON whenever a client gives up part way through the response.
+  ## The fork streams the set one router at a time.  Still present in upstream
+  ## main as of 0bad9f1 -- drop the fork once it is merged there.
   espressif/esp_ot_br_server:
-    git: https://github.com/espressif/esp-thread-br.git
+    git: https://github.com/tostmann/esp-thread-br.git
     path: components/esp_ot_br_server
+    version: 9421affd06ff6c8d91cccea4edb94003cc20c5e4
   ## Pulled in because esp_ot_br_server PRIV_REQUIREs it.  Kept inert: all
   ## EXAMPLE_CONNECT_* options are off, we bring up the backbone ourselves.
   protocol_examples_common:
