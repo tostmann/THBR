@@ -95,12 +95,13 @@ this takes seconds rather than a build on your machine.
 4. **Start it** and watch the log. A stick that answers nothing is flashed
    first, which takes about a minute; lines prefixed `[stick]` come from the
    firmware itself. `br=running` means border routing is up.
-5. **Give Home Assistant the interface.** *Settings → System → Network →
-   Network adapter*: enable your normal adapter **and** `tap0`, then restart
-   Home Assistant. It binds its discovery sockets per interface when it starts,
-   so without `tap0` among them nothing that announces itself across the
-   backbone reaches it — the router's own announcement, and the Matter devices
-   behind it.
+5. **Restart Home Assistant once, when it asks.** Home Assistant binds its
+   discovery sockets only on the network adapters its settings name, when it
+   starts — without `tap0` among them nothing that announces itself across the
+   backbone reaches it: the router's own announcement, and the Matter devices
+   behind it. The add-on puts `tap0` on that list itself and posts a
+   notification asking for the one restart that makes it count. On Home
+   Assistant OS the *Network* settings page does not even offer `tap0`.
 6. **Add the router.** *Settings → Devices & services → Add integration →
    Open Thread Border Router*, and give it `http://192.168.45.2` — the stick's
    address on the backbone, the `stick_addr` option if you changed it. Home
@@ -131,8 +132,11 @@ docker pull tostmann/thbr
 ```
 
 Take the `thbr` service from [`addon/compose.yaml`](addon/compose.yaml), point
-`THBR_DEVICE` at your stick's `/dev/serial/by-id/…` path, and start it. Then do
-step 5 and 6 above — they are the same for both ways of running it.
+`THBR_DEVICE` at your stick's `/dev/serial/by-id/…` path, and start it. Then
+give Home Assistant the interface yourself — without a Supervisor the
+container cannot: *Settings → System → Network → Network adapter*, enable your
+normal adapter **and** `tap0`, restart Home Assistant. Step 6 above is the
+same for both ways of running it.
 [`addon/README.md`](addon/README.md) has the details, including what the
 container needs from the host and why.
 

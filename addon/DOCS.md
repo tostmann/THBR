@@ -145,10 +145,19 @@ or with `GET /node/dataset/active`.
    `esptool erase-flash`, which leaves the stick to generate a fresh one and
    the devices paired on the old network behind, so save the network data
    while the stick is healthy.
-2. **Settings → System → Network → Network adapter**: enable your normal
-   network adapter **and** `tap0`, then restart Home Assistant. Home Assistant
-   binds its mDNS sockets per interface when it starts, so without this it
-   never sees the router.
+2. **Restart Home Assistant once, when it asks.** Home Assistant answers mDNS
+   only on the network adapters its settings name, and takes them up when it
+   starts — without `tap0` among them it never sees the router. On its first
+   start the add-on puts `tap0` on that list itself, next to the adapters
+   already in use and removing none, and posts a notification asking for the
+   one restart that makes it count. It asks the same when Home Assistant came
+   up before `tap0` existed. The *Network* settings page cannot do this on
+   Home Assistant OS: it offers only the interfaces NetworkManager manages,
+   and `tap0` is not one of them. If Home Assistant chose its adapters
+   automatically until then, it now keeps a fixed list. The add-on looks at
+   it again on every start, and should none of the listed adapters exist any
+   more — an interface renamed, say — it adds the one Home Assistant would
+   pick by itself.
 3. **Settings → Devices & services → Add integration → Open Thread Border
    Router**, and give it `http://192.168.45.2` (the `stick_addr` option, if you
    changed it). Home Assistant imports the Thread network from the router.
@@ -357,9 +366,15 @@ abandoned occupy slots for as long as the hardware is switched on.
 **`waiting for /dev/serial/by-id/...`** — wrong path, or the stick is not
 plugged in.
 
-**The add-on is running but no border router is discovered** — step 2 above:
-`tap0` is not among Home Assistant's network adapters, or Home Assistant
-started before the interface existed.
+**The add-on is running but no border router is discovered** — look in the
+add-on log for the line about Home Assistant's network adapters, written
+shortly after the stick answers. `tap0 is among Home Assistant's network
+adapters` means the setting is in place — but Home Assistant takes it up only
+when it starts, so if the list was set while it was running, restart it once
+(as long as the add-on's own request to restart is still showing, the line
+says so). Any other line says what is missing. No such line at all means the
+add-on has not reached Home Assistant's API yet; after ten minutes of that, it
+says so.
 
 **Under plain Docker: Home Assistant must not start before this container.**
 Home Assistant enumerates network adapters once, at startup, and binds its mDNS
@@ -375,8 +390,9 @@ reboot whether Home Assistant really has the interface and restart it if not:
 docker exec homeassistant python3 -c "import ifaddr; print([a.nice_name for a in ifaddr.get_adapters()])"
 ```
 
-As an add-on under the Supervisor this cannot happen: `startup: services` puts
-the add-on before Home Assistant.
+As an add-on under the Supervisor, `startup: services` starts the add-on before
+Home Assistant — and should Home Assistant still come up before `tap0` exists,
+the add-on notices and asks for a restart.
 
 **A Matter server on the same machine will not start, `errno 98` on port
 5580** — the stick dials a fixed address on the backbone to offer its

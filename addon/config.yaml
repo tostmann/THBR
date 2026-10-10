@@ -1,7 +1,7 @@
 # Home Assistant add-on manifest.  The same directory is also the build context
 # for the plain-Docker image (docker build -t thbr addon/).
 name: THBR Thread Border Router
-version: "2026.9.44"
+version: "2026.10.45"
 slug: thbr
 description: Thread border router on an ESP32-C6 stick, reached over its USB port — no Ethernet chip, no radio co-processor on this machine.
 url: https://github.com/tostmann/THBR
@@ -36,6 +36,12 @@ privileged:
 devices:
   - /dev/net/tun
 uart: true
+
+# Home Assistant answers mDNS only on the network adapters its settings name,
+# and on Home Assistant OS its settings page never offers the tap: it lists
+# only what NetworkManager manages.  So the add-on puts the tap on that list
+# itself, through Core's WebSocket API — which needs this.
+homeassistant_api: true
 
 # The add-on's own page in the Home Assistant sidebar: status, an update
 # button, a restart button, and a pass-through to the border router's GUI —

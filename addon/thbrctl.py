@@ -1561,6 +1561,322 @@ def check_identity():
     return True
 
 
+# --------------------------------------------------------------------------- Home Assistant's adapters
+
+HA_NOTICE_ID = "thbr_network_adapter"
+HA_NOTICE_TITLE = "THBR: restart Home Assistant"
+# A request to restart that could not be posted yet, and how many rounds in a
+# row Home Assistant's API has not answered.  See sync_ha_adapters().
+_HA = {"pending": None, "failures": 0}
+
+
+class CoreRefused(Exception):
+    """The Supervisor would not let this add-on through to Home Assistant."""
+
+
+class CoreSocket:
+    """Home Assistant's WebSocket API, reached through the Supervisor.
+
+    Standard library only, like the rest of this file: the handshake, masked
+    text frames out, text frames in, pings answered.  Enough for the handful of
+    request/answer calls made here, and nothing more is attempted.
+
+    The Supervisor lets an add-on through only with homeassistant_api in its
+    manifest, and towards Core it speaks as its own user, an administrator —
+    which is what network/configure requires.  Measured on Home Assistant OS
+    with an add-on that had that one permission and no access to the
+    Supervisor's own API.
+
+    The timeout is short on purpose: this runs in the loop that also keeps the
+    stick's neighbour entry alive, and Home Assistant answers these calls in
+    milliseconds when it answers at all.
+    """
+
+    def __init__(self, token, host="supervisor", port=80,
+                 path="/core/websocket", timeout=5.0):
+        self.sock = socket.create_connection((host, port), timeout=timeout)
+        self.buf = b""
+        self.queue = []
+        self.next_id = 1
+        try:
+            key = base64.b64encode(os.urandom(16)).decode()
+            self.sock.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
+                               "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                               f"Sec-WebSocket-Key: {key}\r\n"
+                               "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+            while b"\r\n\r\n" not in self.buf:
+                self._more()
+            head, _, self.buf = self.buf.partition(b"\r\n\r\n")
+            status = head.split(b"\r\n", 1)[0].decode("latin-1")
+            # 502 while Home Assistant is not running: the caller tries later.
+            if " 101 " not in status:
+                raise OSError(f"no websocket from the Supervisor: {status}")
+            self.recv()                                     # auth_required
+            self.send({"type": "auth", "access_token": token})
+            answer = self.recv()
+            if answer.get("type") != "auth_ok":
+                raise CoreRefused(answer.get("message") or answer.get("type"))
+        except BaseException:
+            self.sock.close()
+            raise
+
+    def _more(self):
+        chunk = self.sock.recv(65536)
+        if not chunk:
+            raise OSError("the Supervisor closed the connection")
+        self.buf += chunk
+
+    def _take(self, n):
+        while len(self.buf) < n:
+            self._more()
+        out, self.buf = self.buf[:n], self.buf[n:]
+        return out
+
+    def recv(self):
+        """The next message, always a dict.
+
+        Core sends several messages as one JSON array when a connection asked
+        it to.  The Supervisor's connection does not ask today, and its proxy
+        passes Core's text through unchanged — so a change on that side would
+        arrive here as a list.  Those are handed out one at a time.
+        """
+        if self.queue:
+            return self.queue.pop(0)
+        parts = []
+        while True:
+            b0, b1 = self._take(2)
+            n = b1 & 0x7F
+            if n == 126:
+                n = struct.unpack(">H", self._take(2))[0]
+            elif n == 127:
+                n = struct.unpack(">Q", self._take(8))[0]
+            mask = self._take(4) if b1 & 0x80 else None
+            data = self._take(n)
+            if mask:
+                data = bytes(c ^ mask[i % 4] for i, c in enumerate(data))
+            op = b0 & 0x0F
+            if op == 0x8:
+                raise OSError("Home Assistant closed the connection")
+            if op == 0x9:
+                self._send(0xA, data)
+            elif op in (0x0, 0x1):
+                parts.append(data)
+                if not b0 & 0x80:
+                    continue
+                msg = json.loads(b"".join(parts).decode())
+                parts = []
+                if isinstance(msg, dict):
+                    return msg
+                if isinstance(msg, list):
+                    self.queue.extend(m for m in msg if isinstance(m, dict))
+                    if self.queue:
+                        return self.queue.pop(0)
+
+    def _send(self, op, data):
+        mask, n = os.urandom(4), len(data)
+        if n < 126:
+            head = struct.pack(">BB", 0x80 | op, 0x80 | n)
+        elif n < 0x10000:
+            head = struct.pack(">BBH", 0x80 | op, 0x80 | 126, n)
+        else:
+            head = struct.pack(">BBQ", 0x80 | op, 0x80 | 127, n)
+        self.sock.sendall(head + mask
+                          + bytes(c ^ mask[i % 4] for i, c in enumerate(data)))
+
+    def send(self, msg):
+        self._send(0x1, json.dumps(msg).encode())
+
+    def call(self, msg):
+        """One command, its result; RuntimeError when Core refuses it."""
+        i, self.next_id = self.next_id, self.next_id + 1
+        self.send(dict(msg, id=i))
+        while True:
+            answer = self.recv()
+            if answer.get("id") == i and answer.get("type") == "result":
+                if answer.get("success"):
+                    return answer.get("result")
+                err = answer.get("error") or {}
+                raise RuntimeError(f"{msg['type']}: "
+                                   f"{err.get('message') or err.get('code')}")
+
+    def close(self):
+        try:
+            self._send(0x8, b"")
+        except OSError:
+            pass
+        self.sock.close()
+
+
+def plan_ha_adapters(net, tap):
+    """What Home Assistant's adapter setting needs, from its `network` answer.
+
+    Returns one of
+      ("listening", None)  the tap is among the adapters Home Assistant uses,
+                           on its list or picked by itself
+      ("restart", None)    on the list, but Home Assistant came up before the
+                           tap existed: it enumerates adapters once, at start
+      ("set", names)       the list to write
+      ("unsure", None)     the list needs the tap, but there is no adapter in
+                           use that could be kept beside it
+
+    Never removes a name.  An empty list means "automatic", and a list switches
+    that off — so a list written here has to carry what the automatic choice
+    uses, or the LAN loses discovery the moment the tap gains it.
+    """
+    configured = list(net.get("configured_adapters") or [])
+    adapters = net.get("adapters") or []
+    present = {a.get("name") for a in adapters}
+    others = [n for n in configured if n != tap]
+    if any(n in present for n in others):
+        if tap not in configured:
+            return "set", others + [tap]
+        return ("listening", None) if tap in present else ("restart", None)
+    # No adapter on the list exists besides the tap: the list is empty, names
+    # only interfaces that are gone (renamed or removed), or names the tap
+    # alone.  In the first two cases Home Assistant picks adapters itself, and
+    # without a default route it picks every one with an outside address —
+    # the tap among them, which it then listens on already.
+    if not any(n in present for n in configured) and any(
+            a.get("name") == tap and a.get("auto") for a in adapters):
+        return "listening", None
+    # Otherwise what to write is the automatic choice plus the tap: with the
+    # tap alone on the list, Home Assistant uses the tap and nothing else.
+    auto = [a["name"] for a in adapters if a.get("auto") and a.get("name") != tap]
+    if not auto:
+        return "unsure", None
+    return "set", others + auto + [tap]
+
+
+def _ha_ask_restart(ws, message):
+    """Post the request to restart.  A refusal is logged, a lost connection raised."""
+    try:
+        ws.call({"type": "call_service", "domain": "persistent_notification",
+                 "service": "create",
+                 "service_data": {"notification_id": HA_NOTICE_ID,
+                                  "title": HA_NOTICE_TITLE, "message": message}})
+    except RuntimeError as e:
+        log(f"could not post the notification ({e})")
+    _HA["pending"] = None
+
+
+def _ha_round(ws, tap):
+    """One look at Home Assistant's adapters, and whatever it calls for."""
+    if _HA["pending"]:
+        # The list went in last time, the request to restart did not get out —
+        # and a fresh look would find the list right and ask for nothing.
+        _ha_ask_restart(ws, _HA["pending"])
+        return True
+    net = ws.call({"type": "network"})
+    verdict, names = plan_ha_adapters(net, tap)
+    if verdict == "listening":
+        # The list being right is not the same as Home Assistant listening: it
+        # takes adapters up only when it starts, and nothing here sees when
+        # that was — except our own request to restart.  Notifications live in
+        # memory, so while it is still up Home Assistant has not restarted.
+        try:
+            notes = ws.call({"type": "persistent_notification/get"}) or []
+        except RuntimeError:
+            notes = []
+        if any(isinstance(n, dict) and n.get("notification_id") == HA_NOTICE_ID
+               for n in notes):
+            log(f"{tap} is among Home Assistant's network adapters, but Home "
+                "Assistant has not restarted since that was set")
+            log("    restart Home Assistant once — until then it does not "
+                "discover the border router")
+        else:
+            log(f"{tap} is among Home Assistant's network adapters")
+        return True
+    if verdict == "unsure":
+        log(f"{tap} is not among Home Assistant's network adapters, and it uses "
+            "none this add-on could keep beside it — changing nothing.  Put "
+            f"{tap} on the list together with your LAN adapter, with the "
+            "WebSocket command network/configure; the settings page does not "
+            "offer it on Home Assistant OS.")
+        return True
+    if verdict == "set":
+        was = ", ".join(net.get("configured_adapters") or []) or "automatic"
+        ws.call({"type": "network/configure",
+                 "config": {"configured_adapters": names}})
+        log(f"Home Assistant's network adapters set to {', '.join(names)} "
+            f"(was: {was})")
+        message = (
+            f"The THBR add-on has set Home Assistant's network adapters to "
+            f"{', '.join(f'`{n}`' for n in names)} (before: {was}), so that "
+            f"it can discover the Thread border router on `{tap}`. Home "
+            "Assistant takes up network adapters only when it starts: "
+            "restart it once to finish.\n\n"
+            f"On Home Assistant OS the Network settings page does not list "
+            f"`{tap}`; the add-on set it through Home Assistant's API.")
+    else:
+        log(f"{tap} is among Home Assistant's network adapters, but Home "
+            "Assistant started before it existed and does not listen on it")
+        message = (
+            f"Home Assistant started before the THBR add-on had created "
+            f"`{tap}`, so it does not listen there and does not discover the "
+            "Thread border router. Restart Home Assistant once to finish.")
+    log("    restart Home Assistant once — until then it does not discover "
+        "the border router")
+    _HA["pending"] = message
+    _ha_ask_restart(ws, message)
+    return True
+
+
+def sync_ha_adapters():
+    """See that Home Assistant listens on the tap, and ask for a restart if not.
+
+    Home Assistant answers mDNS only on the network adapters its settings name,
+    and binds them once, when it starts.  Without the tap among them it never
+    hears the border router announce itself: the Thread panel stays empty and
+    nothing anywhere looks like an error.  On Home Assistant OS the settings
+    page cannot help — it offers only the interfaces NetworkManager manages,
+    and a tap is not one of them (issue #2).  So under the Supervisor this sets
+    the list through Core's API, and asks for the one restart that makes it
+    count.  Restarting Home Assistant is the user's decision, not an add-on's.
+
+    Without a Supervisor there is no token, and nothing to do here: Home
+    Assistant in a container of its own offers the tap on its settings page.
+
+    Returns True once there is nothing left to do, so the caller can stop.
+    """
+    token = os.environ.get("SUPERVISOR_TOKEN")
+    if not token:
+        return True
+    tap = ENV["tap"]
+    ws = None
+    try:
+        ws = CoreSocket(token)
+        done = _ha_round(ws, tap)
+        _HA["failures"] = 0
+        return done
+    except CoreRefused as e:
+        log(f"Home Assistant's API refused this add-on ({e}) — {tap} has to go "
+            "on its network adapter list another way, with the WebSocket "
+            "command network/configure; the settings page does not offer it on "
+            "Home Assistant OS")
+        return True
+    except RuntimeError as e:
+        log(f"could not read or set Home Assistant's network adapters ({e})")
+        return True
+    except (OSError, ValueError) as e:
+        # Home Assistant not up yet — at boot the add-on starts first — or the
+        # connection dropped.  Ask again in a minute, and say so once should
+        # that go on; otherwise the log would simply have no line about it.
+        _HA["failures"] += 1
+        if _HA["failures"] == 10:
+            log(f"Home Assistant's API has not answered for ten minutes ({e}) — "
+                "still asking once a minute")
+        return False
+    except Exception as e:
+        # This shares a loop with the care of the stick; whatever goes wrong
+        # here must not take that down with it.
+        log(f"checking Home Assistant's network adapters failed ({e!r}) — not "
+            "trying again until the add-on restarts")
+        return True
+    finally:
+        if ws is not None:
+            ws.close()
+
+
 def cmd_run():
     if not ENV["device"]:
         wait_for_configuration()
@@ -1641,6 +1957,8 @@ def cmd_run():
     identity_seen = False
     last_ble = time.time() - 55
     ble_synced = False
+    last_ha = time.time() - 55
+    ha_synced = False
     silent = 0
     # First reachability report soon after start, then every five minutes.
     last_check_reach = time.time() - 240
@@ -1779,6 +2097,10 @@ def cmd_run():
         if not ble_synced and time.time() - last_ble >= 60:
             last_ble = time.time()
             ble_synced = sync_ble_proxy()
+        # Until Home Assistant answers: at boot the add-on starts first.
+        if not ha_synced and time.time() - last_ha >= 60:
+            last_ha = time.time()
+            ha_synced = sync_ha_adapters()
         if time.time() - last_status >= 600:
             last_status = time.time()
             try:

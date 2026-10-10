@@ -4,6 +4,27 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.10.45
+
+Firmware 0.1.57, unchanged. On Home Assistant OS the add-on now does the one
+setup step that the settings page cannot.
+
+- **On Home Assistant OS the add-on puts `tap0` among Home Assistant's
+  network adapters itself.** Home Assistant answers mDNS only on the adapters
+  its settings name, and the setup asked for `tap0` to be added on the
+  *Network* settings page. On Home Assistant OS that page never offers it: it
+  lists only the interfaces NetworkManager manages, and a tap is not one of
+  them. The step could not be done, and the Thread panel stayed empty (#2,
+  reported by @giotanzi). The add-on now sets the list through Home
+  Assistant's API — next to the adapters already in use, removing none — and
+  posts a notification asking for the one restart that makes it count. It
+  asks the same when Home Assistant came up before `tap0` existed. For this
+  the add-on has access to Home Assistant's API (`homeassistant_api`).
+  Verified on Home Assistant OS 18.2 with Core 2026.9.0: starting from the
+  automatic choice, the add-on set the list five seconds after the stick
+  answered, and after one restart Home Assistant discovered the border router
+  on `tap0`.
+
 ## 2026.9.44
 
 Firmware 0.1.57. A Bluetooth fix contributed from outside, and a change to how
