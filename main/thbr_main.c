@@ -220,6 +220,12 @@ static void sync_backbone_onlink_address(void)
 }
 
 
+/* The infrastructure-interface index the border-router library accepts, -1
+ * until it is known.  It is not the backbone netif's index on every stick (see
+ * border_router_init_task), so the heartbeat reports both: a heartbeat that
+ * showed only the netif's read as "no mismatch" while the library held 7. */
+static volatile int s_library_idx = -1;
+
 static void border_router_init_task(void *ctx)
 {
     (void)ctx;
@@ -355,6 +361,9 @@ static void border_router_init_task(void *ctx)
             ierr = e;
             break;
         }
+    }
+    if (ierr == OT_ERROR_NONE) {
+        s_library_idx = (int)infra_idx;
     }
     ESP_LOGI(TAG, "infra-if reported running: netif_idx=%" PRIu32 " library_idx=%" PRIu32
                   "%s ot_error=%d br_state=%d",
@@ -591,11 +600,16 @@ void app_main(void)
                 log_thread_addr_states();
             }
         }
-        if (say)
-        ESP_LOGI(TAG, "alive: link=%s heap=%" PRIu32 " br=%s role=%s infra_idx=%d",
-                 backbone_is_up() ? "up" : "down", esp_get_free_heap_size(),
-                 (brs < 4) ? br_state[brs] : "?", (r < 5) ? role[r] : "?",
-                 esp_netif_get_netif_impl_index(backbone_netif()));
+        if (say) {
+            char lib[12] = "?";
+            if (s_library_idx >= 0) {
+                snprintf(lib, sizeof(lib), "%d", s_library_idx);
+            }
+            ESP_LOGI(TAG, "alive: link=%s heap=%" PRIu32 " br=%s role=%s netif_idx=%d library_idx=%s",
+                     backbone_is_up() ? "up" : "down", esp_get_free_heap_size(),
+                     (brs < 4) ? br_state[brs] : "?", (r < 5) ? role[r] : "?",
+                     esp_netif_get_netif_impl_index(backbone_netif()), lib);
+        }
 
         /* Report the mesh-side addresses once routing is live: without a CLI
          * this is the only way to learn the OMR address to ping from the
@@ -617,9 +631,20 @@ void app_main(void)
             otInstance *di = esp_openthread_get_instance();
             char probe[200];
             int n = 0;
+            /* Only NONE identifies the library's index.  Before
+             * border_router_init_task has initialised the library, every
+             * index answers INVALID_STATE (infra_if.cpp checks that first),
+             * which is not INVALID_ARGS either and would record index 0. */
+            int found = -1;
             for (uint32_t idx = 0; idx <= 20 && n < (int)sizeof(probe) - 8; idx++) {
-                n += snprintf(&probe[n], sizeof(probe) - n, "%" PRIu32 ":%d ",
-                              idx, (int)otPlatInfraIfStateChanged(di, idx, true));
+                otError pe = otPlatInfraIfStateChanged(di, idx, true);
+                if (found < 0 && pe == OT_ERROR_NONE) {
+                    found = (int)idx;
+                }
+                n += snprintf(&probe[n], sizeof(probe) - n, "%" PRIu32 ":%d ", idx, (int)pe);
+            }
+            if (found >= 0) {
+                s_library_idx = found;
             }
             otIp6Prefix pfx;
             int e_onlink = (int)otBorderRoutingGetOnLinkPrefix(di, &pfx);
@@ -647,24 +672,45 @@ void app_main(void)
         /* Keep reporting until an address outside the mesh-local and
          * link-local prefixes shows up — that is the OMR address, the one an
          * off-mesh host can actually reach, and it only appears once the
-         * routing manager has published its prefix into the mesh. */
+         * routing manager has published its prefix into the mesh.
+         *
+         * Mesh-local means THIS network's prefix.  The test used to be
+         * fd00:db8::/64, the prefix of the compiled-in default dataset; since
+         * 0.1.44 every stick creates its own network with a random one, so
+         * every RLOC, ALOC and ML-EID came out labelled reachable from the
+         * host -- none of them is -- and the first of them ended the
+         * reporting, whether the OMR address had shown up or not.  The list
+         * is printed only when it changed, so a mesh without an OMR prefix
+         * does not repeat the same lines every ten seconds. */
         static bool omr_seen;
+        static uint32_t addrs_printed;
         if (!omr_seen && brs == OT_BORDER_ROUTING_STATE_RUNNING) {
             esp_openthread_lock_acquire(portMAX_DELAY);
-            for (const otNetifAddress *a = otIp6GetUnicastAddresses(esp_openthread_get_instance());
-                 a != NULL; a = a->mNext) {
-                const uint8_t *b = a->mAddress.mFields.m8;
-                bool mesh_local = (b[0] == 0xfd && b[1] == 0x00 && b[2] == 0x0d && b[3] == 0xb8);
-                bool link_local = (b[0] == 0xfe && b[1] == 0x80);
-                if (!mesh_local && !link_local) {
-                    omr_seen = true;
+            otInstance *ai = esp_openthread_get_instance();
+            const otMeshLocalPrefix *mlp = otThreadGetMeshLocalPrefix(ai);
+            const otNetifAddress *addrs = otIp6GetUnicastAddresses(ai);
+            uint32_t fp = 17;
+            for (const otNetifAddress *a = addrs; a != NULL; a = a->mNext) {
+                for (int w = 0; w < 4; w++) {
+                    fp = fp * 31u + a->mAddress.mFields.m32[w];
                 }
-                ESP_LOGI(TAG, "thread addr: %02x%02x:%02x%02x:%02x%02x:%02x%02x:"
-                              "%02x%02x:%02x%02x:%02x%02x:%02x%02x/%d%s%s",
-                         b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],
-                         b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15],
-                         a->mPrefixLength, a->mPreferred ? " (preferred)" : "",
-                         (!mesh_local && !link_local) ? " <-- OMR, reachable from the host" : "");
+            }
+            if (fp != addrs_printed) {
+                addrs_printed = fp;
+                for (const otNetifAddress *a = addrs; a != NULL; a = a->mNext) {
+                    const uint8_t *b = a->mAddress.mFields.m8;
+                    bool mesh_local = (mlp != NULL && memcmp(b, mlp->m8, sizeof(mlp->m8)) == 0);
+                    bool link_local = (b[0] == 0xfe && b[1] == 0x80);
+                    if (!mesh_local && !link_local) {
+                        omr_seen = true;
+                    }
+                    ESP_LOGI(TAG, "thread addr: %02x%02x:%02x%02x:%02x%02x:%02x%02x:"
+                                  "%02x%02x:%02x%02x:%02x%02x:%02x%02x/%d%s%s",
+                             b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],
+                             b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15],
+                             a->mPrefixLength, a->mPreferred ? " (preferred)" : "",
+                             (!mesh_local && !link_local) ? " <-- OMR, reachable from the host" : "");
+                }
             }
             esp_openthread_lock_release();
         }

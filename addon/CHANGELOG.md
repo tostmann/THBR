@@ -4,6 +4,45 @@ Versions follow the Home Assistant style, `year.month.release`. The firmware
 that ships with each release carries its own number, shown on the add-on's page
 next to the one installed on the stick.
 
+## 2026.10.46
+
+Firmware 0.1.60. Corrections, most of them prompted by #2: log lines that
+reported faults where there were none, a wrong value in the border router's
+properties, and two passages of documentation.
+
+- **The setup no longer says Matter devices are commissioned "as usual".**
+  Commission them from the Matter server's own web page, not from a phone:
+  the Thread network is reachable only from the machine the stick is plugged
+  into, and a phone on the LAN has no route into it. On Home Assistant OS the
+  Android Companion app stopped at "Checking Thread network connectivity",
+  while the Matter server commissioned the same devices (#2, reported by
+  @giotanzi).
+- **The log no longer says the host cannot learn the route into the mesh.**
+  Where `accept_ra` and `accept_ra_rt_info_max_plen` cannot be set on `tap0`,
+  the kernel does not take the route from the border router's advertisement,
+  and the container installs it by hand; the messages said the host would not
+  learn the route at all. As a Home Assistant add-on, which cannot change those
+  settings, the line is now a plain note instead of a warning asking for a
+  `compose.yaml` volume (#2, reported by @giotanzi).
+- **Firmware: only the OMR address is labelled reachable from the host.** The
+  check still compared against the mesh-local prefix of the old built-in
+  network, so since every stick creates its own network (firmware 0.1.44) the
+  RLOC, ALOC and ML-EID addresses carried `<-- OMR, reachable from the host`
+  as well.
+- **Firmware: the heartbeat shows both interface indices.** Its `infra_idx`
+  was the backbone interface's index, not the one the border-router library
+  uses, and read as "no mismatch" next to the `MISMATCH` line at start. It is
+  now `netif_idx=… library_idx=…`.
+- **Firmware: `/get_properties` reports the mesh-local prefix correctly.** It
+  copied 17 bytes out of the 8-byte prefix and showed something like
+  `fd8f:4fc3:46f6:0:fe80:0:0:0:8ce0/140`. The component THBR builds against now
+  carries the fix by @romanstanek (espressif/esp-thread-br#221). Neither THBR
+  nor Home Assistant reads that field.
+- **The FHEM walkthrough no longer announces example modules.** They left the
+  repository in August; its introduction still said two were part of it. The
+  walkthrough ends where FHEM begins and names the FHEM module it was tested
+  with.
+
 ## 2026.10.45
 
 Firmware 0.1.57, unchanged. On Home Assistant OS the add-on now does the one

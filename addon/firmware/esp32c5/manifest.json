@@ -1,7 +1,7 @@
 {
   "product": "THBR",
-  "fw": "0.1.57",
-  "build": "2026-09-17 19:57:17",
+  "fw": "0.1.60",
+  "build": "2026-10-20 02:04:49",
   "chip": "esp32c5",
   "flash_args": "--flash-mode dio --flash-freq 80m --flash-size 4MB",
   "images": [
@@ -21,13 +21,13 @@
       "offset": "0x320000",
       "file": "web_storage.bin",
       "size": 262144,
-      "sha256": "3b614177d09e41e68de49389452b888d785d45d32c3b13d188f7d0851bfd6e55"
+      "sha256": "012fdbaa6658edf445b640f059e31ee69be729a81600d0de0cfaf2a050b72db0"
     },
     {
       "offset": "0x10000",
       "file": "thbr.bin",
-      "size": 1742640,
-      "sha256": "1573a4790517d0febfb04637d53574bc98e65402ba537430cba4ec74fec5e4ca"
+      "size": 1742784,
+      "sha256": "2d1c65ad6ee415fc5969cc6c7399dad6346b8d2e875843a23e8e67975d5e3f5d"
     }
   ]
 }

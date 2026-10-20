@@ -165,8 +165,11 @@ or with `GET /node/dataset/active`.
    over mDNS, but that feeds the *Thread* integration; the *Open Thread Border
    Router* integration has no discovery except for Home Assistant's own
    border-router add-on.
-4. Matter devices are commissioned as usual. If a brand-new device is not
-   found, make sure the commissioning dialog is not restricted to network-only
+4. **Commission Matter devices from the Matter server, not from a phone.** The
+   Thread network is reachable only from the machine the stick is plugged
+   into; a phone on your LAN has no route into it. The Matter Server add-on's
+   own web page takes the pairing code. If a brand-new device is not found,
+   make sure the commissioning dialog is not restricted to network-only
    discovery — a factory-new Thread device is in no network yet and has to be
    found over Bluetooth.
 

@@ -1,9 +1,10 @@
 # Matter devices in FHEM — a worked example
 
 From an IKEA lamp in its box to a switch in FHEM, with the steps that were
-actually walked. Two modules are part of it, and they are **examples**: enough
-to pair a device, read it and switch it, and a starting point for anyone who
-wants more. They are not a finished Matter integration and do not try to be.
+actually walked. The walkthrough covers the border router, the Matter server
+and the pairing, and ends where FHEM begins: the FHEM side is the job of a FHEM
+module, and step 5 names the one that was tested with this setup. This project
+ships no FHEM module of its own.
 
 What is written here was done on real hardware. What is not written here was
 not tried.

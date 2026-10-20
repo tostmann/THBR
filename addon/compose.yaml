@@ -3,7 +3,7 @@
 # the two lines that matter for THBR.
 services:
   thbr:
-    image: tostmann/thbr:2026.10.45  # multi-arch (arm64, amd64); or build
+    image: tostmann/thbr:2026.10.46  # multi-arch (arm64, amd64); or build
                                    # your own: docker build -t thbr addon/
     container_name: thbr
     restart: unless-stopped
@@ -17,9 +17,11 @@ services:
       # device mapping made at container start would not follow.
       - /dev:/dev
       # The pump sets two IPv6 sysctls on the tap (accept_ra=2,
-      # accept_ra_rt_info_max_plen=64); without them the host never learns
-      # the route into the Thread mesh.  /proc/sys is read-only inside a
-      # container, so the host's conf tree is mapped in here.
+      # accept_ra_rt_info_max_plen=64).  Without them the kernel does not take
+      # the route into the Thread mesh from the router advertisement and the
+      # container installs it by hand; with them the kernel keeps it, with the
+      # border router's lifetimes.  /proc/sys is read-only inside a container,
+      # so the host's conf tree is mapped in here.
       - /proc/sys/net/ipv6/conf:/hostsys
       # Keeps the saved network settings across container recreations. As a
       # Home Assistant add-on this is the Supervisor's own /data, which its

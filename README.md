@@ -105,8 +105,7 @@ this takes seconds rather than a build on your machine.
 6. **Add the router.** *Settings → Devices & services → Add integration →
    Open Thread Border Router*, and give it `http://192.168.45.2` — the stick's
    address on the backbone, the `stick_addr` option if you changed it. Home
-   Assistant then imports the Thread network from it, and Matter devices are
-   commissioned as usual.
+   Assistant then imports the Thread network from it.
 
    It has to be typed in: Home Assistant discovers border routers over mDNS,
    and this router does announce itself there — but that discovery feeds the
@@ -114,6 +113,10 @@ this takes seconds rather than a build on your machine.
    integration, the one that actually reads and writes the network, carries no
    mDNS discovery at all; it is set up automatically only for Home Assistant's
    own border-router add-on.
+7. **Commission from the Matter server, not from a phone.** The Thread network
+   is reachable only from the machine the stick is plugged into; a phone on
+   your LAN has no route into it. The Matter Server add-on's own web page
+   takes the pairing code.
 
 The add-on then has its own page in the sidebar, **Thread BR**: state of stick
 and network, a graph of the mesh you can pull around, and the buttons for

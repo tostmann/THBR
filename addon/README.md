@@ -232,9 +232,11 @@ firmware build option).
 - **Healthy, but HA does not discover the router** — step 3 above: `tap0` is
   not among HA's network adapters, or HA started before the tap existed.
 - **`WARNING tap0 sysctls not set`** in the log — the `/proc/sys/net/ipv6/conf`
-  volume from `compose.yaml` is missing. Without `accept_ra=2` and
-  `accept_ra_rt_info_max_plen=64` on the tap the host ignores the router's
-  route advertisements and cannot reach Thread devices.
+  volume from `compose.yaml` is missing. Thread devices stay reachable: the
+  container installs the route into the mesh itself (`installed … by hand`),
+  see [The route into the mesh](#the-route-into-the-mesh). With the volume the
+  kernel takes the route from the border router's advertisements instead. The
+  Home Assistant add-on cannot have the volume and logs this without a warning.
 - **`br=stopped` in the `[stick]` log for minutes** — the firmware probes and
   repairs the interface index itself; if it persists, open an issue with
   `docker logs thbr`. From add-on 2026.8.35 the log is safe to share: it

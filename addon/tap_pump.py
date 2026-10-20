@@ -248,8 +248,8 @@ def main():
                 last = e
         if last is not None:
             print(f"[pump] could not set {key}={val} on {tap_name}: {last} — "
-                  f"without it the host will not learn the route into the mesh",
-                  flush=True)
+                  f"the kernel will not take the route into the mesh from the "
+                  f"router advertisement", flush=True)
 
     # Link up only now: the kernel sends its router solicitations the moment
     # the interface comes up, and the advertisement that answers must meet

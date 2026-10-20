@@ -878,9 +878,10 @@ def after_pump_start():
 
 
 def check_sysctls():
-    """The route into the mesh depends on two per-interface sysctls the pump
-    sets; /proc/sys is read-only in a container unless the host's conf tree is
-    mapped in.  Reading works regardless, so verify and say what is missing."""
+    """Whether the kernel can take the route into the mesh from the router
+    advertisement depends on two per-interface sysctls the pump sets; /proc/sys
+    is read-only in a container unless the host's conf tree is mapped in.
+    Reading works regardless, so verify and say what is missing."""
     tap = ENV["tap"]
     want = {"accept_ra": "2", "accept_ra_rt_info_max_plen": "64"}
     bad = []
@@ -892,10 +893,19 @@ def check_sysctls():
             continue
         if have != val:
             bad.append(f"{key}={have} (want {val})")
-    if bad:
-        log(f"WARNING {tap} sysctls not set: {', '.join(bad)} — the host will not learn the "
-            f"route into the Thread mesh.  Map the host's conf tree into the container: "
-            f"-v /proc/sys/net/ipv6/conf:{ENV['sysctl_dir']}  (see compose.yaml)")
+    # Either way the mesh stays reachable: ensure_backbone_routing() installs
+    # the route by hand once the kernel has not taken it from the router
+    # advertisement.  The warning used to say the host would not learn the
+    # route at all, and on Home Assistant OS it asked for a volume an add-on
+    # cannot have -- a user listed it among the possible causes of a hang (#2).
+    if bad and os.environ.get("SUPERVISOR_TOKEN"):
+        log(f"{tap} sysctls {', '.join(bad)} cannot be changed from an add-on — the "
+            f"add-on installs the route into the Thread mesh itself")
+    elif bad:
+        log(f"WARNING {tap} sysctls not set: {', '.join(bad)} — the kernel will not take the "
+            f"route into the Thread mesh from the router advertisement, so the container "
+            f"installs it by hand.  To leave it to the kernel, map the host's conf tree into "
+            f"the container: -v /proc/sys/net/ipv6/conf:{ENV['sysctl_dir']}  (see compose.yaml)")
     return not bad
 
 

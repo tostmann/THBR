@@ -16,10 +16,13 @@ dependencies:
   ## router's JSON whenever a client gives up part way through the response.
   ## The fork streams the set one router at a time.  Still present in upstream
   ## main as of 0bad9f1 -- drop the fork once it is merged there.
+  ## On top of that it carries espressif/esp-thread-br#221 (cherry-picked):
+  ## /get_properties copied 17 bytes out of the 8-byte mesh-local prefix and
+  ## reported it as fd..:fe80:...:8ce0/140.
   espressif/esp_ot_br_server:
     git: https://github.com/tostmann/esp-thread-br.git
     path: components/esp_ot_br_server
-    version: 9421affd06ff6c8d91cccea4edb94003cc20c5e4
+    version: 4702be7882b6abc5d10d5934ce7ff4ec108e9119
   ## Pulled in because esp_ot_br_server PRIV_REQUIREs it.  Kept inert: all
   ## EXAMPLE_CONNECT_* options are off, we bring up the backbone ourselves.
   protocol_examples_common:
